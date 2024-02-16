@@ -1,0 +1,912 @@
+---
+title: "Bisque"
+author: "Howard Cen"
+date: "2024-01-25"
+output: html_document
+---
+
+
+```{r libraries}
+install.packages("BisqueRNA")
+
+library(BisqueRNA)
+
+library(Biobase)
+
+library(tidyverse)
+```
+
+```{(not used) r use raw counts}
+
+#Bulk RNA-seq data need to be converted from a matrix (columns are samples, rows are genes) to an ExpressionSet
+
+raw.counts <- read.table("input/HumanIslets_OxfordStanfordCombined_GeneExp_ProteomicsSamples.txt", header = T)
+View(raw.counts)
+
+
+# remove non-unique ENSG
+raw.counts <- raw.counts[order(-rowSums(raw.counts[,-(1:2)])),]
+raw.counts <- raw.counts[!duplicated(raw.counts$GeneID),]
+
+rownames(raw.counts) <- raw.counts$GeneID
+raw.unique <- as.matrix(raw.counts[,-(1:2)])
+View(raw.unique)
+
+bulk.eset <- Biobase::ExpressionSet(assayData = raw.unique)
+```
+
+```{r use DeSeq2 normalized counts}
+
+norm.counts <- read.table("output/Norm_counts_islets_oneBatch50.txt", row.names=1, header = T)
+View(norm.counts)
+
+norm.counts <- as.matrix(norm.counts)
+
+bulk.eset <- Biobase::ExpressionSet(assayData = norm.counts)
+
+
+```
+
+```{r using proteomics data}
+pro <- read.table(file="output/protein_filter50.txt", header = T)
+
+pro <- read.csv(file="output/protein_islet_stem_filter50.csv")
+View(pro)
+
+# remove non-unique ENSG
+pro <- pro[order(-rowSums(pro[,-(1:5)])),]
+pro <- pro[!duplicated(pro$ENSG),]
+
+pro <- pro[!is.na(pro$ENSG), ]
+
+rownames(pro) <- pro$ENSG
+
+pro <- as.matrix(pro[ ,-(1:5)])
+
+bulk.eset <- Biobase::ExpressionSet(assayData = pro)
+
+```
+
+
+```{r organize marker genes}
+library(org.Hs.eg.db)
+
+islet.marker <- read_excel("input/panc_markers_JK.xlsx")
+View(islet.marker)
+
+islet.marker$ENSG <- mapIds(org.Hs.eg.db, keys = islet.marker$symbol, 
+                            column="ENSEMBL", keytype="SYMBOL", multiVals="first") 
+View(islet.marker)
+
+write.csv(islet.marker, "output/panc_marker_JK.csv", row.names = F)
+
+
+# not used --------------------------------
+alpha <- read.delim("input/VANGURP_PANCREATIC_ALPHA_CELL.v2023.2.Hs.tsv")
+beta <- read.delim("input/VANGURP_PANCREATIC_BETA_CELL.v2023.2.Hs.tsv")
+gamma <- read.delim("input/VANGURP_PANCREATIC_GAMMA_CELL.v2023.2.Hs.tsv")
+delta <- read.delim("input/VANGURP_PANCREATIC_DELTA_CELL.v2023.2.Hs.tsv")
+acinar <- read.delim("input/MURARO_PANCREAS_ACINAR_CELL.v2023.2.Hs.tsv")
+
+
+View(acinar)
+
+
+format_marker <- function(df, celltype){
+  df.ensg <- df[c(16),] %>% separate_rows(c(2), sep = ",")
+
+  df.symbol <- df[c(17),] %>% separate_rows(c(2), sep = ",")
+  
+  df <- cbind(df.ensg[2], df.symbol[2])
+  
+  colnames(df) <- c("ENSG", "symbol")
+  
+  df$cluster <- celltype
+  
+  return(df)
+}
+
+alpha.marker <- format_marker(alpha, celltype = "Alpha")
+
+beta.marker <- format_marker(beta, celltype = "Beta")
+
+gamma.marker <- format_marker(gamma, celltype = "Gamma")
+
+delta.marker <- format_marker(delta, celltype = "Delta")
+
+acinar.marker <- format_marker(acinar, celltype = "Acinar")
+
+acinar.marker$ENSG <- as.character(mapIds(org.Hs.eg.db, keys=acinar.marker$symbol, 
+                            column="ENSEMBL", keytype="SYMBOL", multiVals="first"))
+View(acinar.marker)
+
+islet.marker <- rbind(alpha.marker, beta.marker, gamma.marker, delta.marker, acinar.marker) %>% as.data.frame()
+
+str(islet.marker)
+
+write.csv(islet.marker, "output/islet_marker_msigdb.csv", row.names = F)
+
+```
+
+```{(not used) r calculate celltype scores using raw counts}
+islet.marker <- read.csv("output/islet_marker.csv")
+View(islet.marker)
+
+markers <- islet.marker %>%
+  select(c("ENSG", "cluster")) %>%
+   rename(gene = ENSG)
+View(markers)
+
+#res <- BisqueRNA::ReferenceBasedDecomposition(bulk.eset, sc.eset, markers)
+
+res.score <- BisqueRNA::MarkerBasedDecomposition(bulk.eset, markers)
+
+View(res.score)
+scores <- res.score$bulk.props
+View(scores)
+
+write.csv(scores, "output/islet_RNAseq_deconvolution_scores.csv")
+
+scores <- read.csv("output/islet_RNAseq_deconvolution_scores.csv", row.names = 1)
+
+```
+
+```{r calculate celltype scores using normalized counts}
+
+islet.marker <- read.csv("output/panc_marker_JK.csv")
+
+islet.marker <- read.csv("input/islet_marker_withAcinar.csv")
+
+islet.marker <- read.csv("output/islet_marker_msigdb.csv")
+
+
+View(islet.marker)
+
+markers <- islet.marker %>%
+  select(c("ENSG", "cluster")) %>%
+   rename(gene = ENSG)
+View(markers)
+
+#res <- BisqueRNA::ReferenceBasedDecomposition(bulk.eset, sc.eset, markers)
+
+res.score <- BisqueRNA::MarkerBasedDecomposition(bulk.eset, markers)
+
+View(res.score)
+
+scores <- res.score$bulk.props
+View(scores)
+
+write.csv(scores, "output/islet_RNAseq_norm_deconvolution_scores_withAcinar.csv") # results using JK's markers 
+
+write.csv(scores, "output/islet_RNAseq_norm_deconvolution_scores_withAcinar2.csv") # results using HC's markers + JK's acinar markers
+
+write.csv(scores, "output/islet_RNAseq_norm_deconvolution_scores_withAcinar_msigdb.csv") # results using JK's markers 
+
+
+scores <- read.csv("output/islet_RNAseq_norm_deconvolution_scores_withAcinar.csv", row.names = 1)
+
+```
+
+# results using my islet + JK's acinar cell markers
+Filtered 0 zero variance genes.
+Using 21 genes for cell type Acinar; 
+100% of 21 marker genes correlate positively with PC1 for cell type Acinar
+Using 7 genes for cell type Alpha; 
+100% of 7 marker genes correlate positively with PC1 for cell type Alpha
+Using 7 genes for cell type Beta; 
+86% of 7 marker genes correlate positively with PC1 for cell type Beta
+Using 11 genes for cell type Delta; 
+55% of 11 marker genes correlate positively with PC1 for cell type Delta
+Using 6 genes for cell type Gamma; 
+67% of 6 marker genes correlate positively with PC1 for cell type Gamma
+Finished estimating cell type proportions using PCA
+
+# results using JK's islet + acinar cell markers
+Filtered 0 zero variance genes.
+Using 23 genes for cell type Acinar; 
+100% of 23 marker genes correlate positively with PC1 for cell type Acinar
+Using 7 genes for cell type Alpha; 
+100% of 7 marker genes correlate positively with PC1 for cell type Alpha
+Using 5 genes for cell type Beta; 
+80% of 5 marker genes correlate positively with PC1 for cell type Beta
+Using 5 genes for cell type Delta; 
+100% of 5 marker genes correlate positively with PC1 for cell type Delta
+Using 10 genes for cell type Gamma; 
+80% of 10 marker genes correlate positively with PC1 for cell type Gamma
+Finished estimating cell type proportions using PCA
+
+# results using msigdb markers
+Using 31 genes for cell type Acinar; 
+97% of 31 marker genes correlate positively with PC1 for cell type Acinar
+Using 7 genes for cell type Alpha; 
+100% of 7 marker genes correlate positively with PC1 for cell type Alpha
+Using 5 genes for cell type Beta; 
+100% of 5 marker genes correlate positively with PC1 for cell type Beta
+Using 25 genes for cell type Delta; 
+60% of 25 marker genes correlate positively with PC1 for cell type Delta
+Using 6 genes for cell type Gamma; 
+67% of 6 marker genes correlate positively with PC1 for cell type Gamma
+Finished estimating cell type proportions using PCA
+
+
+# (didn't use this) results using islet identity markers 
+Estimating proportions for 4 cell types in 90 samples
+Filtered 0 zero variance genes.
+Using 7 genes for cell type Alpha; 
+100% of 7 marker genes correlate positively with PC1 for cell type Alpha
+Using 7 genes for cell type Beta; 
+86% of 7 marker genes correlate positively with PC1 for cell type Beta
+Using 11 genes for cell type Delta; 
+55% of 11 marker genes correlate positively with PC1 for cell type Delta
+Using 6 genes for cell type Gamma; 
+67% of 6 marker genes correlate positively with PC1 for cell type Gamma
+Finished estimating cell type proportions using PCA
+#
+
+```{r calculate celltype scores using proteomics data}
+
+#islet.marker <- read.csv("output/islet_marker.csv")
+
+islet.marker <- read.csv("output/panc_marker_JK.csv") # JK's markers
+
+islet.marker <- read.csv("input/islet_marker_withAcinar.csv") # HC's markers with JK's acinar makeres
+
+islet.marker <- read.csv("output/islet_marker_msigdb.csv")
+
+#View(islet.marker)
+
+{
+markers <- islet.marker %>%
+  dplyr::select(c("ENSG", "cluster")) %>%
+  dplyr::rename(gene = ENSG)
+#View(markers)
+
+#res <- BisqueRNA::ReferenceBasedDecomposition(bulk.eset, sc.eset, markers)
+
+res.score <- BisqueRNA::MarkerBasedDecomposition(bulk.eset, markers)
+
+#View(res.score)
+
+scores <- res.score$bulk.props
+#View(scores)
+}
+
+write.csv(scores, "output/islet_stem_Proteomics_deconvolution_scores_withAcinar.csv") # results using JK's markers 
+
+write.csv(scores, "output/islet_stem_Proteomics_deconvolution_scores_withAcinar2.csv") # results using HC's markers + JK's acinar markers
+
+write.csv(scores, "output/islet_stem_Proteomics_deconvolution_scores_withAcinar_msigdb.csv") # results using msigdb markers
+
+#scores <- read.csv("output/islet_stem_Proteomics_deconvolution_scores_withAcinar.csv", row.names = 1)
+
+```
+
+# results from proteomcis data - JK markers
+Estimating proportions for 5 cell types in 170 samples
+Filtered 2447 zero variance genes.
+Using 9 genes for cell type Acinar; 
+100% of 9 marker genes correlate positively with PC1 for cell type Acinar
+Using 6 genes for cell type Alpha; 
+83% of 6 marker genes correlate positively with PC1 for cell type Alpha
+Using 12 genes for cell type Beta; 
+75% of 12 marker genes correlate positively with PC1 for cell type Beta
+Using 5 genes for cell type Delta; 
+100% of 5 marker genes correlate positively with PC1 for cell type Delta
+Using 5 genes for cell type Gamma; 
+100% of 5 marker genes correlate positively with PC1 for cell type Gamma
+Finished estimating cell type proportions using PCA
+
+# results from proteomcis data - HC markers
+Estimating proportions for 5 cell types in 170 samples
+Filtered 2447 zero variance genes.
+Using 7 genes for cell type Acinar; 
+100% of 7 marker genes correlate positively with PC1 for cell type Acinar
+Using 8 genes for cell type Alpha; 
+88% of 8 marker genes correlate positively with PC1 for cell type Alpha
+Using 12 genes for cell type Beta; 
+92% of 12 marker genes correlate positively with PC1 for cell type Beta
+Using 5 genes for cell type Delta; 
+100% of 5 marker genes correlate positively with PC1 for cell type Delta
+Using 6 genes for cell type Gamma; 
+67% of 6 marker genes correlate positively with PC1 for cell type Gamma
+Finished estimating cell type proportions using PCA
+
+# results from proteomcis data - msigdb markers
+
+Estimating proportions for 5 cell types in 170 samples
+Filtered 2447 zero variance genes.
+Using 72 genes for cell type Acinar; 
+81% of 72 marker genes correlate positively with PC1 for cell type Acinar
+Using 8 genes for cell type Alpha; 
+88% of 8 marker genes correlate positively with PC1 for cell type Alpha
+Using 11 genes for cell type Beta; 
+91% of 11 marker genes correlate positively with PC1 for cell type Beta
+Using 5 genes for cell type Delta; 
+100% of 5 marker genes correlate positively with PC1 for cell type Delta
+Using 6 genes for cell type Gamma; 
+67% of 6 marker genes correlate positively with PC1 for cell type Gamma
+Finished estimating cell type proportions using PCA
+#
+
+```{r organize RNAseq mata data}
+# scores <- read.csv("output/islet_RNAseq_deconvolution_scores.csv", row.names = 1)
+#scores <- read.csv("output/islet_RNAseq_norm_deconvolution_scores.csv", row.names = 1)
+
+scores <- read.csv("output/islet_RNAseq_norm_deconvolution_scores_withAcinar.csv", row.names = 1)
+
+scores <- read.csv("output/islet_RNAseq_norm_deconvolution_scores_withAcinar2.csv", row.names = 1)
+
+scores <- read.csv("output/islet_RNAseq_norm_deconvolution_scores_withAcinar_msigdb.csv", row.names = 1)
+
+
+batch.df <- read.delim("input/Proteomics_RNAseqSamples_Batches.txt", header = F)
+colnames(batch.df) <- c("donor", "batch")
+
+traits.log <- read.csv(file = "output/islets_traits_log.csv", check.names = F)
+
+View(batch.df)
+View(traits.log)
+
+ncol(scores) #96
+nrow(batch.df) #96
+nrow(traits.log) #140
+
+length(intersect(colnames(scores), traits.log$`Donor ID`)) # 95 in common because 1 donor didn't have function data
+
+# remove one very different batch
+diff.batch <- c('R240','R246','R228','R233','R234','R235')
+
+# batch.df[batch.df$donor %in% diff.batch,] #### Batch2_Oxford are removed
+
+traits.log <- traits.log %>% filter(!`Donor ID` %in% diff.batch & `Donor ID` %in% colnames(scores)) #89
+
+batch.df <- batch.df[match(traits.log$`Donor ID`, batch.df$donor),]
+
+scores <- scores[, match(traits.log$`Donor ID`, colnames(scores))]
+
+all(traits.log$`Donor ID` == batch.df$donor) # TRUE
+all(batch.df$donor == colnames(scores)) #TRUE
+
+meta <- full_join(batch.df, traits.log, by=c("donor"="Donor ID"))
+View(meta)
+rownames(meta) <- meta$donor
+
+scores.anno <- rbind(scores, t(meta))
+
+View(scores.anno)
+
+write.csv(scores.anno, "output/islet_RNAseq_norm_deconvolution_scores_LOGtraits_withAcinar.csv")
+
+write.csv(scores.anno, "output/islet_RNAseq_norm_deconvolution_scores_LOGtraits_withAcinar2.csv")
+
+write.csv(scores.anno, "output/islet_RNAseq_norm_deconvolution_scores_LOGtraits_withAcinar_msigdb.csv")
+
+
+scores.anno <- read.csv("output/islet_RNAseq_norm_deconvolution_scores_LOGtraits_withAcinar.csv", row.names = 1)
+
+#write.csv(scores.anno, "output/islet_RNAseq_deconvolution_scores_LOGtraits.csv")
+
+#scores.anno <- read.csv("output/islet_RNAseq_deconvolution_scores_LOGtraits.csv", row.names = 1)
+
+```
+
+```{r organize Proteomics mata data}
+# scores <- read.csv("output/islet_RNAseq_deconvolution_scores.csv", row.names = 1)
+#scores <- read.csv("output/islet_RNAseq_norm_deconvolution_scores.csv", row.names = 1)
+
+scores <- read.csv("output/islet_stem_Proteomics_deconvolution_scores_withAcinar.csv", row.names = 1)
+
+scores <- read.csv("output/islet_stem_Proteomics_deconvolution_scores_withAcinar2.csv", row.names = 1)
+
+scores <- read.csv("output/islet_stem_Proteomics_deconvolution_scores_withAcinar_msigdb.csv", row.names = 1)
+
+
+traits.log <- read.csv(file = "output/islets_traits_log.csv", check.names = F)
+
+pro <- read.csv(file="output/protein_islet_stem_filter50.csv")
+
+{
+sc.meta <-  lm_result <- data.frame(matrix(nrow = 35, ncol = ncol(traits.log)))
+colnames(sc.meta) <- colnames(traits.log)
+sc.meta$`Donor ID` <- c(grep("D.*s", colnames(pro), value = TRUE), grep("D.*u", colnames(pro), value = TRUE))
+sc.meta$diabetes <- c(rep("SC sorted",11), rep("SC unsorted",24))
+
+meta <- rbind(traits.log, sc.meta) %>% rename(Group = diabetes)
+
+#View(meta)
+ncol(scores) #169
+nrow(meta) #175
+
+length(intersect(colnames(scores), meta$`Donor ID`)) # 168 in common
+
+
+# batch.df[batch.df$donor %in% diff.batch,] #### Batch2_Oxford are removed
+
+meta <- meta %>% filter(`Donor ID` %in% colnames(scores)) # 168
+
+scores <- scores[, match(meta$`Donor ID`, colnames(scores))]
+#View(scores)
+
+all(meta$`Donor ID` == colnames(scores)) #TRUE
+
+rownames(meta) <- meta$`Donor ID`
+
+scores.anno <- rbind(scores, t(meta))
+
+}
+
+write.csv(scores.anno, "output/islet_stem_Proteomics_deconvolution_scores_LOGtraits_withAcinar.csv")
+
+write.csv(scores.anno, "output/islet_stem_Proteomics_deconvolution_scores_LOGtraits_withAcinar2.csv")
+
+write.csv(scores.anno, "output/islet_stem_Proteomics_deconvolution_scores_LOGtraits_withAcinar_msigdb.csv")
+
+```
+
+```{r plot scores on heatmap}
+
+library(ComplexHeatmap)
+library(circlize) # installed with ComplexHeatmap, but need to load it
+library(gridtext) # needed for complex heatmap
+library(scales) # for calculating z-scores etc
+
+# scores.anno <- read.csv("output/islet_RNAseq_deconvolution_scores_LOGtraits.csv", row.names = 1)
+
+# RNAseq
+
+scores.anno <- read.csv("output/islet_RNAseq_norm_deconvolution_scores_LOGtraits_withAcinar.csv", row.names = 1)
+
+scores.anno <- read.csv("output/islet_RNAseq_norm_deconvolution_scores_LOGtraits_withAcinar2.csv", row.names = 1)
+
+scores.anno <- read.csv("output/islet_RNAseq_norm_deconvolution_scores_LOGtraits_withAcinar_msigdb.csv", row.names = 1)
+
+# Proteomics
+
+scores.anno <- read.csv("output/islet_stem_Proteomics_deconvolution_scores_LOGtraits_withAcinar.csv", row.names = 1)
+
+scores.anno <- read.csv("output/islet_stem_Proteomics_deconvolution_scores_LOGtraits_withAcinar2.csv", row.names = 1)
+
+scores.anno <- read.csv("output/islet_stem_Proteomics_deconvolution_scores_LOGtraits_withAcinar_msigdb.csv", row.names = 1)
+
+# for RNAseq
+
+anno_df <- as.data.frame(t(scores.anno[c('batch', 'diabetes', "Sex"),]) )# annotation for columns needs to be rows
+anno_df$batch <- gsub("_(.*)","", anno_df$batch)
+
+bcolor <- c(
+               "#56B4E9", #blue
+               "#F0E442",
+               "#D55E00", #darkorange
+               "#009E73", #green
+               "#CC79A7", #magenta
+               "#0072B2" #darkblue
+)
+names(bcolor) <- unique(anno_df$batch)
+
+ha = HeatmapAnnotation(df = anno_df,
+    col = list(batch = bcolor,
+               diabetes = c("ND" = "#999999", "T2D" = "#E69F00"),
+               Sex = c("F" = "#F8766D", "M" = "#00BFC4")
+    )
+)
+
+# for Proteomics
+
+{
+anno_df <- as.data.frame(t(scores.anno[c('Group', "Sex"),]) )  # annotation for columns needs to be rows
+anno_df$Group <- factor(anno_df$Group, levels = unique(anno_df$Group)[c(1,2,4,3)])
+
+ha = HeatmapAnnotation(df = anno_df,
+    col = list(Group = c("ND" = "#999999", "T2D" = "#E69F00", "SC unsorted" = "lightblue", "SC sorted"="blue"),
+               Sex = c("F" = "#F8766D", "M" = "#00BFC4")
+               
+    ), na_col = "white"
+)
+}
+
+#
+
+m <- scores.anno[1:5,] %>% mutate_at(1:ncol(scores.anno),as.numeric) # select certain columns or rows by df[rows,columns]
+
+ncol(m)
+nrow(anno_df)
+View(m)
+max(m)
+min(m)
+
+
+
+heatmap <- Heatmap(m,
+                   show_row_names = TRUE,
+                   show_column_names = FALSE,
+                   show_row_dend = TRUE,
+                   show_column_dend = TRUE,
+                   
+                   clustering_distance_rows = "euclidean",
+                   clustering_method_rows = "ward.D2", # default linkage method is "complete"
+                   
+                   row_dend_side = "left",
+                   row_dend_width = unit(8, "mm"),
+                   
+                   column_names_side = "top",
+                   column_dend_side = "bottom",
+                  
+                   col = colorRamp2(c(min(m),0,max(m)), c("blue", "white", "red")), 
+                   
+                   #column_order = 1:ncol(m.z),
+                   
+                   height = unit(30, "mm"), # set the height of heatmap
+                   width = ncol(m)*unit(1, "mm"), # set the column width
+                   
+                   top_annotation = ha, # annotate columns
+                   
+                   border_gp = gpar(col = "black"), # set border color
+                   
+                   show_heatmap_legend = TRUE,
+                   heatmap_legend_param = list(
+                     title = "Deconv\nscores",
+                     title_position = "topleft",
+                     #at = c(-3, -2, -1, 0, 1, 2, 3), # set ticks/numbers of legend
+                     legend_height = unit(2.5, "cm")) #,
+                   
+                   #split = 4, # split the heatmap into separate blocks by hierarchical clustering
+                   #row_km = 4, # or split the heatmap into separate blocks by k-means clustering
+                   ## determine the number of clusters: https://www.datanovia.com/en/lessons/determining-the-optimal-number-of-clusters-3-must-know-methods/
+                   
+                   ) 
+
+draw(heatmap)
+
+# for RNAseq
+{pdf(file = "figures/heatmap_RNAseq_deconv_scores_withAcinar.pdf",
+    width = 6, 
+    height = 3)
+
+draw(heatmap)
+dev.off()}
+
+
+{pdf(file = "figures/heatmap_RNAseq_deconv_scores_withAcinar2.pdf",
+    width = 6, 
+    height = 3)
+
+draw(heatmap)
+dev.off()}
+
+{pdf(file = "figures/heatmap_RNAseq_deconv_scores_withAcinar_msigdb.pdf",
+    width = 6, 
+    height = 3)
+
+draw(heatmap)
+dev.off()}
+
+
+# for Proteomics
+
+{pdf(file = "figures/heatmap_proteomics_deconv_scores_withAcinar.pdf",
+    width = 10, 
+    height = 3)
+
+draw(heatmap)
+dev.off()}
+
+{pdf(file = "figures/heatmap_proteomics_deconv_scores_withAcinar2.pdf",
+    width = 10, 
+    height = 3)
+
+draw(heatmap)
+dev.off()}
+
+{pdf(file = "figures/heatmap_proteomics_deconv_scores_withAcinar_msigdb.pdf",
+    width = 10, 
+    height = 3)
+
+draw(heatmap)
+dev.off()}
+
+```
+
+```{r scores box plot}
+library(ggbeeswarm)
+
+# RNAseq
+scores.anno <- read.csv("output/islet_RNAseq_norm_deconvolution_scores_LOGtraits_withAcinar.csv", row.names = 1)
+
+scores.anno <- read.csv("output/islet_RNAseq_norm_deconvolution_scores_LOGtraits_withAcinar2.csv", row.names = 1)
+
+scores.anno <- read.csv("output/islet_RNAseq_norm_deconvolution_scores_LOGtraits_withAcinar_msigdb.csv", row.names = 1)
+
+# Proteomics
+
+scores.anno <- read.csv("output/islet_stem_Proteomics_deconvolution_scores_LOGtraits_withAcinar.csv", row.names = 1)
+
+scores.anno <- read.csv("output/islet_stem_Proteomics_deconvolution_scores_LOGtraits_withAcinar2.csv", row.names = 1)
+
+scores.anno <- read.csv("output/islet_stem_Proteomics_deconvolution_scores_LOGtraits_withAcinar_msigdb.csv", row.names = 1)
+
+{
+scores.wide <- as.data.frame( t(scores.anno[c("Alpha", "Beta", "Gamma", "Delta", "Acinar", "Group"),]) )
+#View(scores.wide)
+scores.long <- pivot_longer(scores.wide, cols = 1:5, names_to = "celltype", values_to = "score")
+#str(scores.long)
+
+scores.long <- mutate_at(scores.long, 3, as.numeric)
+}
+
+# RNAseq
+ 
+write.csv(scores.long, "output/islet_RNAseq_norm_deconvolution_scores_LOGtraits_withAcinar_long.csv", row.names = F)
+
+write.csv(scores.long, "output/islet_RNAseq_norm_deconvolution_scores_LOGtraits_withAcinar2_long.csv", row.names = F)
+
+write.csv(scores.long, "output/islet_RNAseq_norm_deconvolution_scores_LOGtraits_withAcinar_msigdb_long.csv", row.names = F)
+
+# Proteomics
+
+write.csv(scores.long, "output/islet_stem_Proteomics_deconvolution_scores_LOGtraits_withAcinar_long.csv", row.names = F)
+
+write.csv(scores.long, "output/islet_stem_Proteomics_deconvolution_scores_LOGtraits_withAcinar2_long.csv", row.names = F)
+
+write.csv(scores.long, "output/islet_stem_Proteomics_deconvolution_scores_LOGtraits_withAcinar_msigdb_long.csv", row.names = F)
+
+
+#
+#View(scores.long)
+{
+scores.long$celltype <- factor(scores.long$celltype, levels = c("Alpha", "Beta", "Gamma", "Delta", "Acinar"))
+
+scores.long$Group <- factor(scores.long$Group, levels = unique(scores.long$Group)[c(1,2,4,3)])
+
+scores.long$plot.group <- paste(scores.long$Group, scores.long$celltype)
+
+scores.long$plot.group <- factor(scores.long$plot.group,levels = unique(scores.long$plot.group)[c(1:5,6:10,16:20,11:15)] )
+
+p <- ggplot(
+  scores.long, 
+  aes(x = celltype, 
+      y = score,
+      color = Group))+
+  geom_quasirandom(method = "pseudorandom",cex=2, alpha=1, dodge.width = 0.8, width = 0.08)+
+  geom_boxplot(aes(group = plot.group), 
+               fill="white", color = "black", outlier.shape = NA, 
+                position=position_dodge(width=0.8),
+               width=0.2, alpha=0.8) +
+  labs(y="Deconv scores")+
+  #scale_color_brewer(palette="Accent")+
+  scale_colour_manual(values=c( "ND"="#999999", "T2D" = "#E69F00" ,"SC unsorted" = "lightblue", "SC sorted"="blue"))+
+  theme_classic()+
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_text(colour = "black",size=14),
+        axis.text.y = element_text(colour = "black",size=12),
+        axis.text.x = element_text(colour = "black",size=12),
+        #axis.ticks.x = element_blank(),
+        legend.title = element_blank(),
+        legend.text = element_text(size=14),
+        legend.position="right",
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank()
+        #aspect.ratio=1/1.2
+  )+
+  guides(colour = guide_legend(override.aes = list(size=2,alpha=1)))
+p
+}
+
+ggsave(filename="figures/boxplot_RNAseq_deconv_scores_withAcinar.pdf",width=6,height=3.5,units="in")
+
+ggsave(filename="figures/boxplot_RNAseq_deconv_scores_withAcinar2.pdf",width=6,height=3.5,units="in")
+
+ggsave(filename="figures/boxplot_RNAseq_deconv_scores_withAcinar_msigdb.pdf",width=6,height=3.5,units="in")
+
+
+ggsave(filename="figures/boxplot_Proteomics_deconv_scores_withAcinar.pdf",width=10,height=3.5,units="in")
+
+ggsave(filename="figures/boxplot_Proteomics_deconv_scores_withAcinar2.pdf",width=10,height=3.5,units="in")
+
+ggsave(filename="figures/boxplot_Proteomics_deconv_scores_withAcinar_msigdb.pdf",width=10,height=3.5,units="in")
+
+```
+
+```{r RNAseq score stats}
+#scores.long <- read.csv("output/islet_RNAseq_norm_deconvolution_scores_LOGtraits_withAcinar_long.csv")
+
+scores.long <- read.csv("output/islet_RNAseq_norm_deconvolution_scores_LOGtraits_withAcinar2_long.csv")
+
+View(scores.long)
+
+sink(file="output/stats_RNAseq_deconv.txt", append=TRUE) # create a file to save R output
+for (i in unique(scores.long$celltype)){
+  dat <- scores.long %>% filter(celltype == i)
+  res <- t.test(score ~ diabetes, data = dat, var.equal = TRUE)
+  cat(i)
+  print(res)
+  
+}
+sink(file = NULL) # stop sink
+
+sink.number() # check remaining sink connection (should be 0)
+
+#library(broom)
+#tidy(res)
+
+
+```
+
+# stats - HC markers
+Alpha
+	Two Sample t-test
+
+data:  score by diabetes
+t = -2.4578, df = 87, p-value = 0.01596
+alternative hypothesis: true difference in means between group ND and group T2D is not equal to 0
+95 percent confidence interval:
+ -2.9298746 -0.3098786
+sample estimates:
+ mean in group ND mean in group T2D 
+       -0.1390807         1.4807959 
+
+Beta
+	Two Sample t-test
+
+data:  score by diabetes
+t = 4.2693, df = 87, p-value = 4.983e-05
+alternative hypothesis: true difference in means between group ND and group T2D is not equal to 0
+95 percent confidence interval:
+ 1.350940 3.704623
+sample estimates:
+ mean in group ND mean in group T2D 
+        0.1963367        -2.3314449 
+
+Gamma
+	Two Sample t-test
+
+data:  score by diabetes
+t = -0.88119, df = 87, p-value = 0.3806
+alternative hypothesis: true difference in means between group ND and group T2D is not equal to 0
+95 percent confidence interval:
+ -1.6195110  0.6246016
+sample estimates:
+ mean in group ND mean in group T2D 
+      -0.08134373        0.41611095 
+
+Delta
+	Two Sample t-test
+
+data:  score by diabetes
+t = 0.87057, df = 87, p-value = 0.3864
+alternative hypothesis: true difference in means between group ND and group T2D is not equal to 0
+95 percent confidence interval:
+ -0.7457678  1.9081962
+sample estimates:
+ mean in group ND mean in group T2D 
+      0.009370056      -0.571844124 
+
+Acinar
+	Two Sample t-test
+
+data:  score by diabetes
+t = -3.2091, df = 87, p-value = 0.001865
+alternative hypothesis: true difference in means between group ND and group T2D is not equal to 0
+95 percent confidence interval:
+ -6.381668 -1.499973
+sample estimates:
+ mean in group ND mean in group T2D 
+        -0.339552          3.601268 
+
+
+#
+
+```{r Proteomics score stats}
+scores.long <- read.csv("output/islet_stem_Proteomics_deconvolution_scores_LOGtraits_withAcinar2_long.csv")
+
+View(scores.long)
+
+sink(file="output/stats_proteomics_deconv.txt", append=TRUE) # create a file to save R output
+for (i in unique(scores.long$celltype)){
+  dat <- scores.long %>% filter(celltype == i)
+  a1 <- aov(score ~ Group, data=dat)
+  cat(i)
+  print(summary(a1))
+  print(TukeyHSD(a1))
+}
+
+sink(file = NULL) # stop sink
+
+sink.number() # check remaining sink connection (should be 0)
+
+```
+
+# stats
+Alpha             Df Sum Sq Mean Sq F value  Pr(>F)   
+Group         3   41.5  13.827   3.944 0.00949 **
+Residuals   164  575.0   3.506                   
+---
+Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+  Tukey multiple comparisons of means
+    95% family-wise confidence level
+
+Fit: aov(formula = score ~ Group, data = dat)
+
+$Group
+                            diff         lwr       upr     p adj
+SC sorted-ND          -1.0854329 -2.61812815 0.4472624 0.2592957
+SC unsorted-ND        -0.8914554 -1.98051367 0.1976028 0.1496206
+T2D-ND                 0.8566218 -0.43880535 2.1520490 0.3184981
+SC unsorted-SC sorted  0.1939775 -1.57561055 1.9635655 0.9919418
+T2D-SC sorted          1.9420547  0.03849872 3.8456107 0.0436305
+T2D-SC unsorted        1.7480772  0.17950513 3.3166494 0.0223204
+
+Beta             Df Sum Sq Mean Sq F value Pr(>F)    
+Group         3  541.1  180.38   82.63 <2e-16 ***
+Residuals   164  358.0    2.18                   
+---
+Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+  Tukey multiple comparisons of means
+    95% family-wise confidence level
+
+Fit: aov(formula = score ~ Group, data = dat)
+
+$Group
+                            diff        lwr        upr     p adj
+SC sorted-ND          -3.7858559 -4.9952706 -2.5764413 0.0000000
+SC unsorted-ND        -4.6762765 -5.5356274 -3.8169257 0.0000000
+T2D-ND                -2.0107745 -3.0329664 -0.9885827 0.0000054
+SC unsorted-SC sorted -0.8904206 -2.2867619  0.5059206 0.3509034
+T2D-SC sorted          1.7750814  0.2730291  3.2771337 0.0133535
+T2D-SC unsorted        2.6655020  1.4277778  3.9032262 0.0000006
+
+Gamma             Df Sum Sq Mean Sq F value   Pr(>F)    
+Group         3  147.1   49.05   26.27 6.26e-14 ***
+Residuals   164  306.2    1.87                     
+---
+Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+  Tukey multiple comparisons of means
+    95% family-wise confidence level
+
+Fit: aov(formula = score ~ Group, data = dat)
+
+$Group
+                            diff        lwr        upr     p adj
+SC sorted-ND          -1.8101627 -2.9285849 -0.6917404 0.0002527
+SC unsorted-ND        -2.4700308 -3.2647270 -1.6753347 0.0000000
+T2D-ND                 0.1192541 -0.8260313  1.0645396 0.9878378
+SC unsorted-SC sorted -0.6598681 -1.9511533  0.6314170 0.5475064
+T2D-SC sorted          1.9294168  0.5403740  3.3184597 0.0023162
+T2D-SC unsorted        2.5892850  1.4446831  3.7338869 0.0000001
+
+Delta             Df Sum Sq Mean Sq F value Pr(>F)    
+Group         3  237.9   79.30   88.64 <2e-16 ***
+Residuals   164  146.7    0.89                   
+---
+Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+  Tukey multiple comparisons of means
+    95% family-wise confidence level
+
+Fit: aov(formula = score ~ Group, data = dat)
+
+$Group
+                            diff        lwr        upr     p adj
+SC sorted-ND          -2.4854803 -3.2596714 -1.7112892 0.0000000
+SC unsorted-ND        -2.8845383 -3.4346406 -2.3344359 0.0000000
+T2D-ND                 0.8419512  0.1876083  1.4962941 0.0056745
+SC unsorted-SC sorted -0.3990580 -1.2929077  0.4947918 0.6536329
+T2D-SC sorted          3.3274315  2.3659122  4.2889508 0.0000000
+T2D-SC unsorted        3.7264895  2.9341763  4.5188026 0.0000000
+
+Acinar             Df Sum Sq Mean Sq F value  Pr(>F)    
+Group         3  153.2   51.07   11.81 4.8e-07 ***
+Residuals   164  709.0    4.32                    
+---
+Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+  Tukey multiple comparisons of means
+    95% family-wise confidence level
+
+Fit: aov(formula = score ~ Group, data = dat)
+
+$Group
+                            diff        lwr        upr     p adj
+SC sorted-ND          -1.8529539 -3.5549599 -0.1509478 0.0269614
+SC unsorted-ND        -1.3325965 -2.5419587 -0.1232343 0.0244838
+T2D-ND                 2.1607522  0.7222243  3.5992801 0.0008049
+SC unsorted-SC sorted  0.5203574 -1.4447100  2.4854248 0.9018198
+T2D-SC sorted          4.0137061  1.8998718  6.1275404 0.0000119
+T2D-SC unsorted        3.4933487  1.7515026  5.2351947 0.0000034
