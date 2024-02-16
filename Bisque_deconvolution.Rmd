@@ -16,24 +16,6 @@ library(Biobase)
 library(tidyverse)
 ```
 
-```{(not used) r use raw counts}
-
-#Bulk RNA-seq data need to be converted from a matrix (columns are samples, rows are genes) to an ExpressionSet
-
-raw.counts <- read.table("input/HumanIslets_OxfordStanfordCombined_GeneExp_ProteomicsSamples.txt", header = T)
-View(raw.counts)
-
-
-# remove non-unique ENSG
-raw.counts <- raw.counts[order(-rowSums(raw.counts[,-(1:2)])),]
-raw.counts <- raw.counts[!duplicated(raw.counts$GeneID),]
-
-rownames(raw.counts) <- raw.counts$GeneID
-raw.unique <- as.matrix(raw.counts[,-(1:2)])
-View(raw.unique)
-
-bulk.eset <- Biobase::ExpressionSet(assayData = raw.unique)
-```
 
 ```{r use DeSeq2 normalized counts}
 
@@ -71,6 +53,7 @@ bulk.eset <- Biobase::ExpressionSet(assayData = pro)
 ```{r organize marker genes}
 library(org.Hs.eg.db)
 
+# orgaized Acinar marker from Segerstolpe et al
 islet.marker <- read_excel("input/panc_markers_JK.xlsx")
 View(islet.marker)
 
@@ -81,12 +64,12 @@ View(islet.marker)
 write.csv(islet.marker, "output/panc_marker_JK.csv", row.names = F)
 
 
-# not used --------------------------------
+# organize Van Gurp markers downloaded from msigDB
 alpha <- read.delim("input/VANGURP_PANCREATIC_ALPHA_CELL.v2023.2.Hs.tsv")
 beta <- read.delim("input/VANGURP_PANCREATIC_BETA_CELL.v2023.2.Hs.tsv")
 gamma <- read.delim("input/VANGURP_PANCREATIC_GAMMA_CELL.v2023.2.Hs.tsv")
 delta <- read.delim("input/VANGURP_PANCREATIC_DELTA_CELL.v2023.2.Hs.tsv")
-acinar <- read.delim("input/MURARO_PANCREAS_ACINAR_CELL.v2023.2.Hs.tsv")
+#acinar <- read.delim("input/MURARO_PANCREAS_ACINAR_CELL.v2023.2.Hs.tsv")
 
 
 View(acinar)
@@ -114,9 +97,9 @@ gamma.marker <- format_marker(gamma, celltype = "Gamma")
 
 delta.marker <- format_marker(delta, celltype = "Delta")
 
-acinar.marker <- format_marker(acinar, celltype = "Acinar")
+#acinar.marker <- format_marker(acinar, celltype = "Acinar")
 
-acinar.marker$ENSG <- as.character(mapIds(org.Hs.eg.db, keys=acinar.marker$symbol, 
+#acinar.marker$ENSG <- as.character(mapIds(org.Hs.eg.db, keys=acinar.marker$symbol, 
                             column="ENSEMBL", keytype="SYMBOL", multiVals="first"))
 View(acinar.marker)
 
@@ -128,36 +111,11 @@ write.csv(islet.marker, "output/islet_marker_msigdb.csv", row.names = F)
 
 ```
 
-```{(not used) r calculate celltype scores using raw counts}
-islet.marker <- read.csv("output/islet_marker.csv")
-View(islet.marker)
-
-markers <- islet.marker %>%
-  select(c("ENSG", "cluster")) %>%
-   rename(gene = ENSG)
-View(markers)
-
-#res <- BisqueRNA::ReferenceBasedDecomposition(bulk.eset, sc.eset, markers)
-
-res.score <- BisqueRNA::MarkerBasedDecomposition(bulk.eset, markers)
-
-View(res.score)
-scores <- res.score$bulk.props
-View(scores)
-
-write.csv(scores, "output/islet_RNAseq_deconvolution_scores.csv")
-
-scores <- read.csv("output/islet_RNAseq_deconvolution_scores.csv", row.names = 1)
-
-```
 
 ```{r calculate celltype scores using normalized counts}
 
-islet.marker <- read.csv("output/panc_marker_JK.csv")
-
+# this marker csv is combined from Van Gurp et al. and Segerstolpe et al. 
 islet.marker <- read.csv("input/islet_marker_withAcinar.csv")
-
-islet.marker <- read.csv("output/islet_marker_msigdb.csv")
 
 
 View(islet.marker)
@@ -176,14 +134,9 @@ View(res.score)
 scores <- res.score$bulk.props
 View(scores)
 
-write.csv(scores, "output/islet_RNAseq_norm_deconvolution_scores_withAcinar.csv") # results using JK's markers 
 
 write.csv(scores, "output/islet_RNAseq_norm_deconvolution_scores_withAcinar2.csv") # results using HC's markers + JK's acinar markers
 
-write.csv(scores, "output/islet_RNAseq_norm_deconvolution_scores_withAcinar_msigdb.csv") # results using JK's markers 
-
-
-scores <- read.csv("output/islet_RNAseq_norm_deconvolution_scores_withAcinar.csv", row.names = 1)
 
 ```
 
@@ -201,57 +154,13 @@ Using 6 genes for cell type Gamma;
 67% of 6 marker genes correlate positively with PC1 for cell type Gamma
 Finished estimating cell type proportions using PCA
 
-# results using JK's islet + acinar cell markers
-Filtered 0 zero variance genes.
-Using 23 genes for cell type Acinar; 
-100% of 23 marker genes correlate positively with PC1 for cell type Acinar
-Using 7 genes for cell type Alpha; 
-100% of 7 marker genes correlate positively with PC1 for cell type Alpha
-Using 5 genes for cell type Beta; 
-80% of 5 marker genes correlate positively with PC1 for cell type Beta
-Using 5 genes for cell type Delta; 
-100% of 5 marker genes correlate positively with PC1 for cell type Delta
-Using 10 genes for cell type Gamma; 
-80% of 10 marker genes correlate positively with PC1 for cell type Gamma
-Finished estimating cell type proportions using PCA
-
-# results using msigdb markers
-Using 31 genes for cell type Acinar; 
-97% of 31 marker genes correlate positively with PC1 for cell type Acinar
-Using 7 genes for cell type Alpha; 
-100% of 7 marker genes correlate positively with PC1 for cell type Alpha
-Using 5 genes for cell type Beta; 
-100% of 5 marker genes correlate positively with PC1 for cell type Beta
-Using 25 genes for cell type Delta; 
-60% of 25 marker genes correlate positively with PC1 for cell type Delta
-Using 6 genes for cell type Gamma; 
-67% of 6 marker genes correlate positively with PC1 for cell type Gamma
-Finished estimating cell type proportions using PCA
-
-
-# (didn't use this) results using islet identity markers 
-Estimating proportions for 4 cell types in 90 samples
-Filtered 0 zero variance genes.
-Using 7 genes for cell type Alpha; 
-100% of 7 marker genes correlate positively with PC1 for cell type Alpha
-Using 7 genes for cell type Beta; 
-86% of 7 marker genes correlate positively with PC1 for cell type Beta
-Using 11 genes for cell type Delta; 
-55% of 11 marker genes correlate positively with PC1 for cell type Delta
-Using 6 genes for cell type Gamma; 
-67% of 6 marker genes correlate positively with PC1 for cell type Gamma
-Finished estimating cell type proportions using PCA
-#
 
 ```{r calculate celltype scores using proteomics data}
 
-#islet.marker <- read.csv("output/islet_marker.csv")
 
-islet.marker <- read.csv("output/panc_marker_JK.csv") # JK's markers
 
 islet.marker <- read.csv("input/islet_marker_withAcinar.csv") # HC's markers with JK's acinar makeres
 
-islet.marker <- read.csv("output/islet_marker_msigdb.csv")
 
 #View(islet.marker)
 
@@ -271,30 +180,12 @@ scores <- res.score$bulk.props
 #View(scores)
 }
 
-write.csv(scores, "output/islet_stem_Proteomics_deconvolution_scores_withAcinar.csv") # results using JK's markers 
 
 write.csv(scores, "output/islet_stem_Proteomics_deconvolution_scores_withAcinar2.csv") # results using HC's markers + JK's acinar markers
 
-write.csv(scores, "output/islet_stem_Proteomics_deconvolution_scores_withAcinar_msigdb.csv") # results using msigdb markers
-
-#scores <- read.csv("output/islet_stem_Proteomics_deconvolution_scores_withAcinar.csv", row.names = 1)
 
 ```
 
-# results from proteomcis data - JK markers
-Estimating proportions for 5 cell types in 170 samples
-Filtered 2447 zero variance genes.
-Using 9 genes for cell type Acinar; 
-100% of 9 marker genes correlate positively with PC1 for cell type Acinar
-Using 6 genes for cell type Alpha; 
-83% of 6 marker genes correlate positively with PC1 for cell type Alpha
-Using 12 genes for cell type Beta; 
-75% of 12 marker genes correlate positively with PC1 for cell type Beta
-Using 5 genes for cell type Delta; 
-100% of 5 marker genes correlate positively with PC1 for cell type Delta
-Using 5 genes for cell type Gamma; 
-100% of 5 marker genes correlate positively with PC1 for cell type Gamma
-Finished estimating cell type proportions using PCA
 
 # results from proteomcis data - HC markers
 Estimating proportions for 5 cell types in 170 samples
@@ -311,33 +202,9 @@ Using 6 genes for cell type Gamma;
 67% of 6 marker genes correlate positively with PC1 for cell type Gamma
 Finished estimating cell type proportions using PCA
 
-# results from proteomcis data - msigdb markers
-
-Estimating proportions for 5 cell types in 170 samples
-Filtered 2447 zero variance genes.
-Using 72 genes for cell type Acinar; 
-81% of 72 marker genes correlate positively with PC1 for cell type Acinar
-Using 8 genes for cell type Alpha; 
-88% of 8 marker genes correlate positively with PC1 for cell type Alpha
-Using 11 genes for cell type Beta; 
-91% of 11 marker genes correlate positively with PC1 for cell type Beta
-Using 5 genes for cell type Delta; 
-100% of 5 marker genes correlate positively with PC1 for cell type Delta
-Using 6 genes for cell type Gamma; 
-67% of 6 marker genes correlate positively with PC1 for cell type Gamma
-Finished estimating cell type proportions using PCA
-#
 
 ```{r organize RNAseq mata data}
-# scores <- read.csv("output/islet_RNAseq_deconvolution_scores.csv", row.names = 1)
-#scores <- read.csv("output/islet_RNAseq_norm_deconvolution_scores.csv", row.names = 1)
-
-scores <- read.csv("output/islet_RNAseq_norm_deconvolution_scores_withAcinar.csv", row.names = 1)
-
 scores <- read.csv("output/islet_RNAseq_norm_deconvolution_scores_withAcinar2.csv", row.names = 1)
-
-scores <- read.csv("output/islet_RNAseq_norm_deconvolution_scores_withAcinar_msigdb.csv", row.names = 1)
-
 
 batch.df <- read.delim("input/Proteomics_RNAseqSamples_Batches.txt", header = F)
 colnames(batch.df) <- c("donor", "batch")
@@ -375,31 +242,17 @@ scores.anno <- rbind(scores, t(meta))
 
 View(scores.anno)
 
-write.csv(scores.anno, "output/islet_RNAseq_norm_deconvolution_scores_LOGtraits_withAcinar.csv")
 
 write.csv(scores.anno, "output/islet_RNAseq_norm_deconvolution_scores_LOGtraits_withAcinar2.csv")
 
-write.csv(scores.anno, "output/islet_RNAseq_norm_deconvolution_scores_LOGtraits_withAcinar_msigdb.csv")
 
 
-scores.anno <- read.csv("output/islet_RNAseq_norm_deconvolution_scores_LOGtraits_withAcinar.csv", row.names = 1)
-
-#write.csv(scores.anno, "output/islet_RNAseq_deconvolution_scores_LOGtraits.csv")
-
-#scores.anno <- read.csv("output/islet_RNAseq_deconvolution_scores_LOGtraits.csv", row.names = 1)
 
 ```
 
 ```{r organize Proteomics mata data}
-# scores <- read.csv("output/islet_RNAseq_deconvolution_scores.csv", row.names = 1)
-#scores <- read.csv("output/islet_RNAseq_norm_deconvolution_scores.csv", row.names = 1)
-
-scores <- read.csv("output/islet_stem_Proteomics_deconvolution_scores_withAcinar.csv", row.names = 1)
 
 scores <- read.csv("output/islet_stem_Proteomics_deconvolution_scores_withAcinar2.csv", row.names = 1)
-
-scores <- read.csv("output/islet_stem_Proteomics_deconvolution_scores_withAcinar_msigdb.csv", row.names = 1)
-
 
 traits.log <- read.csv(file = "output/islets_traits_log.csv", check.names = F)
 
@@ -435,11 +288,9 @@ scores.anno <- rbind(scores, t(meta))
 
 }
 
-write.csv(scores.anno, "output/islet_stem_Proteomics_deconvolution_scores_LOGtraits_withAcinar.csv")
 
 write.csv(scores.anno, "output/islet_stem_Proteomics_deconvolution_scores_LOGtraits_withAcinar2.csv")
 
-write.csv(scores.anno, "output/islet_stem_Proteomics_deconvolution_scores_LOGtraits_withAcinar_msigdb.csv")
 
 ```
 
@@ -454,19 +305,11 @@ library(scales) # for calculating z-scores etc
 
 # RNAseq
 
-scores.anno <- read.csv("output/islet_RNAseq_norm_deconvolution_scores_LOGtraits_withAcinar.csv", row.names = 1)
-
 scores.anno <- read.csv("output/islet_RNAseq_norm_deconvolution_scores_LOGtraits_withAcinar2.csv", row.names = 1)
-
-scores.anno <- read.csv("output/islet_RNAseq_norm_deconvolution_scores_LOGtraits_withAcinar_msigdb.csv", row.names = 1)
 
 # Proteomics
 
-scores.anno <- read.csv("output/islet_stem_Proteomics_deconvolution_scores_LOGtraits_withAcinar.csv", row.names = 1)
-
 scores.anno <- read.csv("output/islet_stem_Proteomics_deconvolution_scores_LOGtraits_withAcinar2.csv", row.names = 1)
-
-scores.anno <- read.csv("output/islet_stem_Proteomics_deconvolution_scores_LOGtraits_withAcinar_msigdb.csv", row.names = 1)
 
 # for RNAseq
 
@@ -558,13 +401,6 @@ heatmap <- Heatmap(m,
 draw(heatmap)
 
 # for RNAseq
-{pdf(file = "figures/heatmap_RNAseq_deconv_scores_withAcinar.pdf",
-    width = 6, 
-    height = 3)
-
-draw(heatmap)
-dev.off()}
-
 
 {pdf(file = "figures/heatmap_RNAseq_deconv_scores_withAcinar2.pdf",
     width = 6, 
@@ -573,22 +409,10 @@ dev.off()}
 draw(heatmap)
 dev.off()}
 
-{pdf(file = "figures/heatmap_RNAseq_deconv_scores_withAcinar_msigdb.pdf",
-    width = 6, 
-    height = 3)
-
-draw(heatmap)
-dev.off()}
 
 
 # for Proteomics
 
-{pdf(file = "figures/heatmap_proteomics_deconv_scores_withAcinar.pdf",
-    width = 10, 
-    height = 3)
-
-draw(heatmap)
-dev.off()}
 
 {pdf(file = "figures/heatmap_proteomics_deconv_scores_withAcinar2.pdf",
     width = 10, 
@@ -597,12 +421,6 @@ dev.off()}
 draw(heatmap)
 dev.off()}
 
-{pdf(file = "figures/heatmap_proteomics_deconv_scores_withAcinar_msigdb.pdf",
-    width = 10, 
-    height = 3)
-
-draw(heatmap)
-dev.off()}
 
 ```
 
@@ -610,19 +428,12 @@ dev.off()}
 library(ggbeeswarm)
 
 # RNAseq
-scores.anno <- read.csv("output/islet_RNAseq_norm_deconvolution_scores_LOGtraits_withAcinar.csv", row.names = 1)
 
 scores.anno <- read.csv("output/islet_RNAseq_norm_deconvolution_scores_LOGtraits_withAcinar2.csv", row.names = 1)
 
-scores.anno <- read.csv("output/islet_RNAseq_norm_deconvolution_scores_LOGtraits_withAcinar_msigdb.csv", row.names = 1)
-
 # Proteomics
 
-scores.anno <- read.csv("output/islet_stem_Proteomics_deconvolution_scores_LOGtraits_withAcinar.csv", row.names = 1)
-
 scores.anno <- read.csv("output/islet_stem_Proteomics_deconvolution_scores_LOGtraits_withAcinar2.csv", row.names = 1)
-
-scores.anno <- read.csv("output/islet_stem_Proteomics_deconvolution_scores_LOGtraits_withAcinar_msigdb.csv", row.names = 1)
 
 {
 scores.wide <- as.data.frame( t(scores.anno[c("Alpha", "Beta", "Gamma", "Delta", "Acinar", "Group"),]) )
@@ -634,20 +445,13 @@ scores.long <- mutate_at(scores.long, 3, as.numeric)
 }
 
 # RNAseq
- 
-write.csv(scores.long, "output/islet_RNAseq_norm_deconvolution_scores_LOGtraits_withAcinar_long.csv", row.names = F)
 
 write.csv(scores.long, "output/islet_RNAseq_norm_deconvolution_scores_LOGtraits_withAcinar2_long.csv", row.names = F)
 
-write.csv(scores.long, "output/islet_RNAseq_norm_deconvolution_scores_LOGtraits_withAcinar_msigdb_long.csv", row.names = F)
 
 # Proteomics
 
-write.csv(scores.long, "output/islet_stem_Proteomics_deconvolution_scores_LOGtraits_withAcinar_long.csv", row.names = F)
-
 write.csv(scores.long, "output/islet_stem_Proteomics_deconvolution_scores_LOGtraits_withAcinar2_long.csv", row.names = F)
-
-write.csv(scores.long, "output/islet_stem_Proteomics_deconvolution_scores_LOGtraits_withAcinar_msigdb_long.csv", row.names = F)
 
 
 #
@@ -691,18 +495,11 @@ p <- ggplot(
 p
 }
 
-ggsave(filename="figures/boxplot_RNAseq_deconv_scores_withAcinar.pdf",width=6,height=3.5,units="in")
-
 ggsave(filename="figures/boxplot_RNAseq_deconv_scores_withAcinar2.pdf",width=6,height=3.5,units="in")
 
-ggsave(filename="figures/boxplot_RNAseq_deconv_scores_withAcinar_msigdb.pdf",width=6,height=3.5,units="in")
-
-
-ggsave(filename="figures/boxplot_Proteomics_deconv_scores_withAcinar.pdf",width=10,height=3.5,units="in")
 
 ggsave(filename="figures/boxplot_Proteomics_deconv_scores_withAcinar2.pdf",width=10,height=3.5,units="in")
 
-ggsave(filename="figures/boxplot_Proteomics_deconv_scores_withAcinar_msigdb.pdf",width=10,height=3.5,units="in")
 
 ```
 
