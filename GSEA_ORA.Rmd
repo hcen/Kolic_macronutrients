@@ -1,0 +1,633 @@
+---
+title: "GSEA"
+author: "Howard Cen"
+date: "2024-02-13"
+output: html_document
+---
+```{r}
+
+#BiocManager::install("clusterProfiler")
+#BiocManager::install("ReactomePA")
+library("clusterProfiler")
+library("ReactomePA")
+
+library(tidyverse)
+
+
+
+```
+
+
+```{r GSEA function}
+library(tidyverse)
+library(msigdbr) # load MSigDB gene sets, v7.5.1 (released January 2022)
+library("clusterProfiler")
+library("ReactomePA")
+#install.packages("openxlsx")
+library(openxlsx)
+
+gsea_human <- function(df,FC_col, p_col, name){ 
+  
+  #df = pro.de
+  #FC_col = "logFC"
+  #p_col = "p"
+  #name = "proteomics_T2D"
+  
+  # remove duplicated entrez
+  
+  df <- df[order(df[[p_col]]),]
+  df <- df[!duplicated(df$entrez),]
+  df <- df[!is.na(df$entrez), ]
+
+  # option1 rank by log2FC value
+  #genelist <- df$log2FoldChange
+  
+  # option2 rank by signed -log10 p value
+  genelist <- sign(df[[FC_col]]) * (-log10(df[[p_col]]))
+  
+  # option3 rank by log2FC*(-log10 p value)
+  #genelist <- (df$log2FoldChange) * (-log10(df$pvalue))
+  
+  # entrez id as names of the gene list
+  names(genelist) <- df$entrez
+  genelist = sort(genelist, decreasing = TRUE)
+  genelist[genelist==Inf] <- 23
+  genelist <- na.omit(genelist)
+  
+  head(genelist)
+  
+  gse.kegg <- gseKEGG(
+    geneList=genelist,
+    organism = "hsa",
+    minGSSize = 15, 
+    maxGSSize = 500,
+    pvalueCutoff = 1,
+    keyType = "kegg"
+  )
+  gse.kegg <- setReadable(gse.kegg, OrgDb = org.Hs.eg.db, keyType="ENTREZID") # The geneID column is translated from EntrezID to symbol
+  gse.kegg.df <- as.data.frame(gse.kegg)
+
+  gseReactome <- gsePathway(
+    geneList=genelist,
+    organism = "human",
+    minGSSize = 15, 
+    maxGSSize = 500,
+    pvalueCutoff = 1,
+    verbose = TRUE)
+  gseReactome <- setReadable(gseReactome, OrgDb = org.Hs.eg.db, keyType="ENTREZID") # The geneID column is translated from EntrezID to symbol
+  gseReactome.df <- as.data.frame(gseReactome)
+  
+  gseGO.bp <- gseGO(
+    geneList=genelist,
+    ont = "BP",
+    OrgDb = org.Hs.eg.db,
+    minGSSize = 15, 
+    maxGSSize = 500,
+    pvalueCutoff = 1,
+    verbose = TRUE,
+    keyType = "ENTREZID"
+  )
+  gseGO.bp <- setReadable(gseGO.bp, OrgDb = org.Hs.eg.db, keyType="ENTREZID") # The geneID column is translated from EntrezID to symbol
+  gseGO.bp.df <- as.data.frame(gseGO.bp)
+ 
+  gseGO.mf <- gseGO(
+    geneList=genelist,
+    ont = "MF",
+    OrgDb = org.Hs.eg.db,
+    minGSSize = 15, 
+    maxGSSize = 500,
+    pvalueCutoff = 1,
+    verbose = TRUE,
+    keyType = "ENTREZID"
+  )
+  gseGO.mf <- setReadable(gseGO.mf, OrgDb = org.Hs.eg.db, keyType="ENTREZID") # The geneID column is translated from EntrezID to symbol
+  gseGO.mf.df <- as.data.frame(gseGO.mf)
+
+  gseGO.cc <- gseGO(
+    geneList=genelist,
+    ont = "CC",
+    OrgDb = org.Hs.eg.db,
+    minGSSize = 15, 
+    maxGSSize = 500,
+    pvalueCutoff = 1,
+    verbose = TRUE,
+    keyType = "ENTREZID"
+  )
+  gseGO.cc <- setReadable(gseGO.cc, OrgDb = org.Hs.eg.db, keyType="ENTREZID") # The geneID column is translated from EntrezID to symbol
+  gseGO.cc.df <- as.data.frame(gseGO.cc)
+
+
+#  gse.mkegg <- gseMKEGG(
+#    geneList=genelist,
+#    organism = "hsa",
+#    minGSSize = 15, 
+#    maxGSSize = 500,
+#    pvalueCutoff = 1,
+#    keyType = "kegg"
+#  )
+#  gse.mkegg <- setReadable(gse.mkegg, OrgDb = org.Hs.eg.db, keyType="ENTREZID") # The geneID column is translated from EntrezID to symbol
+#  gse.mkegg.df <- as.data.frame(gse.mkegg)
+
+  
+#  gse.wp <- gseWP(geneList = genelist, organism = "Homo sapiens",
+#                  minGSSize = 15, 
+#                  maxGSSize = 500,
+#                  pvalueCutoff = 1)
+#  gse.wp <- setReadable(gse.wp, OrgDb = org.Hs.eg.db, keyType="ENTREZID") # The geneID column is translated from EntrezID to symbol
+#  gse.wp.df <- as.data.frame(gse.wp)
+
+
+  # mSigDB Hallmark gene sets  
+  #msigdbr_show_species()
+  #m_df <- msigdbr(species = "Mus musculus")
+  #head(m_df, 2) %>% as.data.frame
+  
+  # H: hallmark gene sets
+  # C1: positional gene sets
+  # C2: curated gene sets
+  # C3: motif gene sets
+  # C4: computational gene sets
+  # C5: GO gene sets
+  # C6: oncogenic signatures
+  # C7: immunologic signatures
+  
+  # MSigDb GSEA
+  
+  #msigdbr_show_species()
+  h_t2g.h <- msigdbr(species = "Homo sapiens", category = "H") %>% 
+    dplyr::select(gs_name, entrez_gene)
+  head(h_t2g.h)
+  
+  gse.hallmark <- GSEA(geneList = genelist,
+                          minGSSize = 15, 
+                          maxGSSize = 500,
+                          eps = 1e-20,
+                          pvalueCutoff = 1,
+                          pAdjustMethod = "BH",
+                          TERM2GENE = h_t2g.h)
+  
+  gse.hallmark <- setReadable(gse.hallmark, OrgDb = org.Hs.eg.db, keyType="ENTREZID") # The geneID column is translated from EntrezID to symbol
+  
+  gse.hallmark.df <- as.data.frame(gse.hallmark)
+  
+  #
+  
+  h_t2g.c8 <- msigdbr(species = "Homo sapiens", category = "C8") %>% 
+    dplyr::select(gs_name, entrez_gene)
+  head(h_t2g.c8)
+  
+  gse.c8 <- GSEA(geneList = genelist,
+                          minGSSize = 15, 
+                          maxGSSize = 500,
+                          eps = 1e-20,
+                          pvalueCutoff = 1,
+                          pAdjustMethod = "BH",
+                          TERM2GENE = h_t2g.c8)
+  
+  gse.c8 <- setReadable(gse.c8, OrgDb = org.Hs.eg.db, keyType="ENTREZID") # The geneID column is translated from EntrezID to symbol
+  
+  gse.c8.df <- as.data.frame(gse.c8)
+  
+  
+  # Add the data frames to separate sheets
+  wb <- createWorkbook()
+    
+  addWorksheet(wb, "MSigDB_Hallmark")
+  writeData(wb, "MSigDB_Hallmark", gse.hallmark.df)
+  
+  addWorksheet(wb, "KEGG")
+  writeData(wb, "KEGG", gse.kegg.df)
+  
+  addWorksheet(wb, "Reactome")
+  writeData(wb, "Reactome", gseReactome.df)
+  
+  addWorksheet(wb, "GO_BP")
+  writeData(wb, "GO_BP", gseGO.bp.df)
+  
+  addWorksheet(wb, "GO_MF")
+  writeData(wb, "GO_MF", gseGO.mf.df)
+  
+  addWorksheet(wb, "GO_CC")
+  writeData(wb, "GO_CC", gseGO.cc.df)
+  
+  addWorksheet(wb, "MSigDB_C8_celltype")
+  writeData(wb, "MSigDB_C8_celltype", gse.c8.df)
+
+
+# Save the workbook to a file
+  fpath <- paste0("output/GSEA_p_", name, ".xlsx")
+  saveWorkbook(wb, fpath, overwrite = TRUE)
+  
+  cat(paste0("GSEA results saved in - ", fpath))
+  
+}
+
+```
+
+
+```{r run GSEA}
+rna.deseq2 <- read.csv(file="output/DESeq2_islets_RNA_oneBatch50_batch.csv")
+# remove padj NA. They are probably omited by automatic independent filtering due to low mean normalized count.
+rna.deseq2 <- rna.deseq2[!is.na(rna.deseq2$padj), ]
+
+pro.de <- read.csv("output/islet_proteomics_DE_Grace.csv") # 118 ND, 16 T2D
+View(pro.de)
+
+#
+gsea_human(df = rna.deseq2,
+  FC_col = "log2FoldChange",
+  p_col = "pvalue",
+  name = "RNAseq_batch_T2D")
+
+gsea_human(df = pro.de,
+  FC_col = "logFC",
+  p_col = "p",
+  name = "proteomics_T2D")
+  
+```
+
+
+
+```{r }
+## common genes ---------
+library(readxl)
+
+rna.hall <- read_excel("output/GSEA_p_RNAseq_batch_T2D.xlsx", sheet = 1)
+rna.kegg <- read_excel("output/GSEA_p_RNAseq_batch_T2D.xlsx", sheet = 2)
+View(rna.hall)
+pro.hall <- read_excel("output/GSEA_p_proteomics_T2D.xlsx", sheet = 1)
+pro.kegg <- read_excel("output/GSEA_p_proteomics_T2D.xlsx", sheet = 2)
+
+#rna.oneBatch.all.hall <- read_excel("input/GSEA_RNA_all_welch_p_oneBatch.xlsx", sheet = 1)
+#rna.oneBatch.all.kegg <- read_excel("input/GSEA_RNA_all_welch_p_oneBatch.xlsx", sheet = 3)
+
+#pro.oneBatch.all.hall <- read_excel("input/GSEA_protein_all_welch_p_oneBatch.xlsx", sheet = 1)
+#pro.oneBatch.all.kegg <- read_excel("input/GSEA_protein_all_welch_p_oneBatch.xlsx", sheet = 3)
+
+# Hallmark -------------
+{df1 <-  rna.hall %>%
+  filter(p.adjust<0.005) %>% 
+  mutate(Log10adj.P=log10(p.adjust)*(-1))
+
+
+df2 <-  pro.hall %>% 
+  filter(p.adjust<0.005) %>% 
+  mutate(Log10adj.P=log10(p.adjust)*(-1))
+
+colnames(df1)
+
+df <- df1 %>%
+  full_join(df2, by="Description", suffix=c("_RNA","_protein")) 
+View(df)
+
+df.rna <- rna.hall %>%
+  filter(Description %in% df$Description) %>% 
+  mutate(logFDR=log10(qvalue)*(-1),
+         set= "RNA")
+
+df.pro <- pro.hall %>%
+  filter(Description %in% df$Description) %>% 
+  mutate(logFDR=log10(qvalue)*(-1),
+         set= "Protein")
+}
+# all KEGG ------------
+
+{df1 <-  rna.kegg %>%
+  filter(p.adjust<0.005) %>% 
+  mutate(Log10adj.P=log10(p.adjust)*(-1))
+
+
+df2 <-  pro.kegg %>% 
+  filter(p.adjust<0.005) %>% 
+  mutate(Log10adj.P=log10(p.adjust)*(-1))
+
+colnames(df1)
+
+df <- df1 %>%
+  full_join(df2, by="Description", suffix=c("_RNA","_protein")) 
+View(df)
+
+df.rna <- rna.kegg %>%
+  filter(Description %in% df$Description) %>% 
+  mutate(logFDR=log10(qvalue)*(-1),
+         set= "RNA")
+  
+df.pro <- pro.kegg %>%
+  filter(Description %in% df$Description) %>% 
+  mutate(logFDR=log10(qvalue)*(-1),
+         set= "Protein")
+}
+
+# (common scripts)
+{df.rna.pro <- df.rna %>%
+  full_join(df.pro, by="Description", suffix=c("_RNA","_protein"))
+df.rna.pro <- df.rna.pro[order(rowMeans(df.rna.pro[,c('logFDR_RNA','logFDR_RNA')], na.rm = T),decreasing = T),]
+df.rna.pro$order <- 1:nrow(df.rna.pro)
+head(df.rna.pro)
+colnames(df.rna.pro)
+
+df.rna.pro.long <- rbind(df.rna,df.pro) %>%
+  left_join(df.rna.pro[,c("Description","order")], by="Description")
+
+head(df.rna.pro.long)
+
+df.rna.pro.long$set <- factor(df.rna.pro.long$set, levels=c("RNA","Protein"))
+}
+
+# for Hallmark only, format gene set names
+{df.rna.pro.long$library <- "Hallmark"
+df.rna.pro.long$Description <- gsub(x =df.rna.pro.long$Description, pattern = "HALLMARK_",replacement = "") 
+df.rna.pro.long$Description <- gsub(x =df.rna.pro.long$Description, pattern = "_",replacement = " ") 
+df.rna.pro.long$Description <- str_to_sentence(df.rna.pro.long$Description)
+
+
+df.rna.pro.long$Description <- gsub(x = df.rna.pro.long$Description, pattern = "G2m",replacement = "G2M") 
+df.rna.pro.long$Description <- gsub(x = df.rna.pro.long$Description, pattern = "Kras",replacement = "KRAS")
+df.rna.pro.long$Description <- gsub(x = df.rna.pro.long$Description, pattern = "E2f",replacement = "E2F") 
+df.rna.pro.long$Description <- gsub(x = df.rna.pro.long$Description, pattern = "Il6",replacement = "IL6") 
+df.rna.pro.long$Description <- gsub(x = df.rna.pro.long$Description, pattern = "jak",replacement = "JAK") 
+df.rna.pro.long$Description <- gsub(x = df.rna.pro.long$Description, pattern = "stat",replacement = "STAT") 
+df.rna.pro.long$Description <- gsub(x = df.rna.pro.long$Description, pattern = "Tnfa",replacement = "TNFa") 
+df.rna.pro.long$Description <- gsub(x = df.rna.pro.long$Description, pattern = "nfkb",replacement = "NFkB") 
+df.rna.pro.long$Description <- gsub(x = df.rna.pro.long$Description, pattern = "Il2",replacement = "IL2") 
+df.rna.pro.long$Description <- gsub(x = df.rna.pro.long$Description, pattern = "Tgf",replacement = "TGF") 
+df.rna.pro.long$Description <- gsub(x = df.rna.pro.long$Description, pattern = "Myc",replacement = "MYC") 
+df.rna.pro.long$Description <- gsub(x = df.rna.pro.long$Description, pattern = "dn",replacement = "Down")
+df.rna.pro.long$Description <- gsub(x = df.rna.pro.long$Description, pattern = "up",replacement = "Up")
+}
+
+View(df.rna.pro.long)
+
+write.csv(df.rna.pro.long, "output/RNAseq_batch_Proteomics_T2D_hallmark_long.csv",row.names=F)
+# write.csv(df.rna.pro.long, "output/rna_pro_hallmark_long_oneBatch.csv",row.names=F)
+
+write.csv(df.rna.pro.long, "output/RNAseq_batch_Proteomics_T2D_KEGG_long.csv",row.names=F)
+# write.csv(df.rna.pro.long, "output/rna_pro_all_kegg_long.csv",row.names=F)
+
+#
+
+#df.rna.pro.long <- read.csv("input/rna_pro_all_hallmark_long_HC.csv") # manually fixed capitalizations
+#df.rna.pro.long <- read.csv("input/rna_pro_hallmark_long_oneBatch_HC.csv") # manually fixed capitalizations
+
+
+#df.rna.pro.long <- read.csv("output/rna_pro_all_kegg_long.csv") 
+
+df.rna.pro.long <- read.csv("output/RNAseq_batch_Proteomics_T2D_hallmark_long.csv")
+df.rna.pro.long <- read.csv("output/RNAseq_batch_Proteomics_T2D_KEGG_long.csv")
+
+
+df.rna.pro.long$set <- factor(df.rna.pro.long$set, levels=c("RNA","Protein"))
+
+##
+
+p.hallmark <- ggplot(df.rna.pro.long, 
+               aes(x=set, y = fct_reorder(Description, -order))) + 
+  geom_point(aes(size = logFDR,
+                 colour = NES)) +
+  theme_bw(base_size = 16) +
+  scale_color_gradient2(#limits=c(0,5), 
+                        midpoint = 0, 
+                        low = "blue",
+                        mid= "white",
+                        high = "red", 
+                        space = "Lab" )+
+  ylab(NULL)+
+  xlab(NULL)+
+  theme(axis.ticks.x = element_blank(),
+    axis.text.y = element_text(colour = "black",size=14),
+    axis.text.x = element_text(colour = "black",size=14),
+    legend.title = element_text(color = "black", size = 13))+
+  labs(color = "NES",size="-log10(FDR)") +
+  theme(panel.grid.minor.y = element_blank())+
+  theme(panel.grid.minor.x  = element_blank()) +
+  facet_grid(. ~ library) +
+  theme(strip.background =element_rect(fill=alpha("#E69F00", 0.2) ))+
+  theme(strip.text = element_text(colour = 'black'))
+
+p.hallmark
+
+
+# for KEGG 
+df.rna.pro.long$Description
+
+genesets <- c(#"Ribosome",
+              "Cytokine-cytokine receptor interaction",                       
+              "Protein processing in endoplasmic reticulum",
+              "NOD-like receptor signaling pathway",                          
+              "MAPK signaling pathway",                                       
+              "NF-kappa B signaling pathway",                                 
+              "Th1 and Th2 cell differentiation",                             
+              "Allograft rejection",                                          
+              "Synaptic vesicle cycle",                                       
+              "Necroptosis",                                                  
+              "Antigen processing and presentation",                   
+              "Fluid shear stress and atherosclerosis",                       
+              "Hippo signaling pathway",                                      
+              "Pathways in cancer",                                           
+              "Apoptosis",                                                    
+              "Pancreatic secretion",                                         
+              "Th17 cell differentiation",                                    
+              "Lipid and atherosclerosis",                                    
+              "Proteoglycans in cancer",                                      
+              "Regulation of actin cytoskeleton",                             
+              "Oxidative phosphorylation",                                    
+              "Tight junction",                                               
+              "Focal adhesion",                                               
+              "Valine, leucine and isoleucine degradation",                   
+              "Ribosome biogenesis in eukaryotes",                            
+              "Nucleocytoplasmic transport",                                  
+              "Spliceosome"
+)
+
+df.rna.pro.long <- df.rna.pro.long %>%
+  filter(Description %in% genesets)
+df.rna.pro.long$library <- "KEGG"
+
+# 
+p.kegg <- ggplot(df.rna.pro.long, 
+                     aes(x=set, y = fct_reorder(Description, -order))) + 
+  geom_point(aes(size = logFDR,
+                 colour = NES)) +
+  theme_bw(base_size = 16) +
+  scale_color_gradient2(#limits=c(0,5), 
+    midpoint = 0, 
+    low = "blue",
+    mid= "white",
+    high = "red", 
+    space = "Lab" )+
+  ylab(NULL)+
+  xlab(NULL)+
+  theme(axis.ticks.x = element_blank(),
+        axis.text.y = element_text(colour = "black",size=14),
+        axis.text.x = element_text(colour = "black",size=14),
+        legend.title = element_text(color = "black", size = 13))+
+  labs(color = "NES",size="-log10(FDR)") +
+  theme(panel.grid.minor.y = element_blank())+
+  theme(panel.grid.minor.x  = element_blank()) +
+  facet_grid(. ~ library) +
+  theme(strip.background =element_rect(fill=alpha("#E69F00", 0.2) ))+
+  theme(strip.text = element_text(colour = 'black'))
+
+p.kegg
+
+
+#install.packages("cowplot")
+library(cowplot)
+#plot_grid(p.hallmark.all, p.kegg.all, ncol = 1, align = "v",rel_heights=4:5)
+plot_grid(p.hallmark, p.kegg, ncol = 1, align = "v",rel_heights=1:1)
+
+ggsave(filename="figures/RNAseq_batch_proteomics_T2D_Hallmark_KEGG.pdf",width=18,height=27,units="cm")
+
+```
+
+# ORA analysis and plotting for RNA-protein correlated genes are in <RNA_protein_association.Rmd>
+```{r ORA function}
+
+ora_human <- function(x, all_genes, name){ 
+  
+  library(msigdbr) # load MSigDB gene sets, v7.5.1 (released January 2022)
+  library("clusterProfiler")
+  library("ReactomePA")
+  #install.packages("openxlsx")
+  library(openxlsx)
+  
+  #KEGG ORA
+  KEGG <- enrichKEGG(gene         = x$entrez,
+                     organism     = 'hsa',
+                     universe      = all_genes,
+                     pAdjustMethod="BH", 
+                     pvalueCutoff=1, 
+                     qvalueCutoff=1,
+                     minGSSize = 15,
+                     maxGSSize = 500)
+  KEGG <- setReadable(KEGG, OrgDb = org.Hs.eg.db, keyType="ENTREZID") # The geneID column is translated from EntrezID to symbol
+  KEGG.df <- as.data.frame(KEGG)
+  head(KEGG.df)
+
+  #Reactome ORA
+  react <- enrichPathway(gene         = x$entrez,
+                         organism     = 'human',
+                         universe      = all_genes,
+                         minGSSize = 15,
+                         maxGSSize = 500,
+                         pvalueCutoff=1, pAdjustMethod="BH", 
+                         qvalueCutoff=1)
+  react <- setReadable(react, OrgDb = org.Hs.eg.db, keyType="ENTREZID") # The geneID column is translated from EntrezID to symbol
+  react.df <- as.data.frame(react)
+  head(react.df)
+  #react.df2 <- react.df
+  #react.df2$Description <- gsub(x = react.df2$Description, pattern = "\\ ",replacement = "_") 
+  #react.df2$Description <- gsub(x = react.df2$Description, pattern = "\\,",replacement = ".")
+  #write.xlsx2(react.df, file="output/correlated_genes_ORA.xlsx", sheetName = "Reactome",
+  #            col.names = TRUE, row.names = TRUE, append = TRUE)
+  
+  gobp <- enrichGO(gene        = x$entrez,
+                    universe      = all_genes,
+                    OrgDb         = org.Hs.eg.db,
+                    ont           = "BP",
+                    pAdjustMethod = "BH",
+                    pvalueCutoff  = 1,
+                    qvalueCutoff  = 1,
+                    minGSSize = 15,
+                    maxGSSize = 500,
+                    readable      = TRUE)
+  gobp.df <- as.data.frame(gobp)
+  head(gobp.df)
+  #write.xlsx2(gobp.df, file="output/correlated_genes_ORA.xlsx", sheetName = "GO_BP",
+  #            col.names = TRUE, row.names = TRUE, append = TRUE)
+  
+  gomf <- enrichGO(gene       = x$entrez,
+                    universe      = all_genes,
+                    OrgDb         = org.Hs.eg.db,
+                    ont           = "MF",
+                    pAdjustMethod = "BH",
+                    pvalueCutoff  = 1,
+                    qvalueCutoff  = 1,
+                    minGSSize = 15,
+                    maxGSSize = 500,
+                    readable      = TRUE)
+  gomf.df <- as.data.frame(gomf)
+  head(gomf.df)
+  #write.xlsx2(gomf.df, file="output/correlated_genes_ORA.xlsx", sheetName = "GO_MF",
+  #            col.names = TRUE, row.names = TRUE, append = TRUE)
+  
+  gocc <- enrichGO(gene      = x$entrez,
+                    universe      = all_genes,
+                    OrgDb         = org.Hs.eg.db,
+                    ont           = "CC",
+                    pAdjustMethod = "BH",
+                    pvalueCutoff  = 1,
+                    qvalueCutoff  = 1,
+                    minGSSize = 15,
+                    maxGSSize = 500,
+                    readable      = TRUE)
+  gocc.df <- as.data.frame(gocc)
+  head(gocc.df)
+  #write.xlsx2(gocc.df, file="output/correlated_genes_ORA.xlsx", sheetName = "GO_CC",
+  #            col.names = TRUE, row.names = TRUE, append = TRUE)
+  
+  # MSigDb ORA
+  h_t2g.h <- msigdbr(species = "Homo sapiens", category = "H") %>% 
+    dplyr::select(gs_name, entrez_gene)
+  head(h_t2g.h)
+  
+  
+  hallmark <- enricher(x$entrez,
+                       TERM2GENE=h_t2g.h,
+                        universe  = all_genes,
+                       pvalueCutoff = 1,
+                       qvalueCutoff = 1,
+                       minGSSize = 15,
+                       maxGSSize = 500
+                       )
+
+  hallmark <- setReadable(hallmark, OrgDb = org.Hs.eg.db, keyType="ENTREZID") # The geneID column is translated from EntrezID to symbol
+  hallmark.df <- as.data.frame(hallmark)
+  View(hallmark.df)
+  #
+  h_t2g.c8 <- msigdbr(species = "Homo sapiens", category = "C8") %>% 
+    dplyr::select(gs_name, entrez_gene)
+  head(h_t2g.c8)
+  
+  c8 <- enricher(x$entrez,
+                 TERM2GENE=h_t2g.c8,
+                 universe      = all_genes,
+                 pvalueCutoff = 1,
+                 qvalueCutoff = 1,
+                 minGSSize = 15,
+                 maxGSSize = 500)
+  c8 <- setReadable(c8, OrgDb = org.Hs.eg.db, keyType="ENTREZID") # The geneID column is translated from EntrezID to symbol
+  c8.df <- as.data.frame(c8)
+
+wb <- createWorkbook()
+
+# Add the data frames to separate sheets
+addWorksheet(wb, "MSigDB_hallmark")
+writeData(wb, "MSigDB_hallmark", hallmark.df)
+
+addWorksheet(wb, "KEGG")
+writeData(wb, "KEGG", KEGG.df)
+
+addWorksheet(wb, "Reactome")
+writeData(wb, "Reactome", react.df)
+
+addWorksheet(wb, "GO_BP")
+writeData(wb, "GO_BP", gobp.df)
+
+addWorksheet(wb, "GO_MF")
+writeData(wb, "GO_MF", gomf.df)
+
+addWorksheet(wb, "GO_CC")
+writeData(wb, "GO_CC", gocc.df)
+
+addWorksheet(wb, "MSigDB_C8_celltype")
+writeData(wb, "MSigDB_C8_celltype", c8.df)
+
+
+# Save the workbook to a file
+saveWorkbook(wb, paste0("output/ORA_", name, "_LOG2pro50_VSTrna50.xlsx"), overwrite = TRUE)
+
+cat(paste0("ORA results saved in - output/ORA_", name, "_LOG2pro50_VSTrna50.xlsx"))
+}
+
+```

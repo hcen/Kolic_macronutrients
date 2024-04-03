@@ -1,0 +1,1076 @@
+---
+title: "traits_RNA_protein_association"
+author: "Howard Cen"
+date: "2023-10-30"
+output: html_document
+---
+
+
+
+```{r }
+#install.packages("tidyverse")
+library(tidyverse)
+
+#install.packages("readxl")
+library(readxl)
+
+#install.packages("writexl")
+library(writexl)
+
+#install.packages("openxlsx")
+library(openxlsx)
+
+
+#install.packages("Hmisc")
+library(Hmisc) # for correlation rcorr()
+
+
+library(ggrepel) # for label text in ggplot2
+
+#install.packages("GGally")
+library("GGally") # For the ggpair() to plot pair-wise correlation panels
+
+
+
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path)) ##Set working directory to where this file is.
+getwd()
+
+
+```
+
+
+
+```{r traits-protein formating}
+
+# correlate proteins with traits 
+
+pro.filter <- read.table(file="output/protein_filter50.txt",sep = "\t",header = T, row.names = 1)
+?read.table
+traits.log <- read.csv(file = "output/islets_traits_log.csv", check.names = F)
+View(pro.filter)
+View(traits.log)
+pro.cor <- pro.filter[,-c(2:4)] %>%
+  mutate_at(-1, as.numeric)
+pro.cor <- pro.cor[order(rowSums(pro.cor[,-1]), decreasing = T),] # order row sum from high to low abundance
+pro.cor <- pro.cor[!duplicated(pro.cor$Protein.Ids),]  # remove duplicated protein IDs (none) by keeping the most abundant one
+
+dim(pro.cor) # 50% - 7724 / 85% - 7129, same as protein IDs above
+str(pro.cor)
+View(pro.cor)
+
+pro.cor <- as.data.frame(t(pro.cor[,-1])) 
+
+
+
+View(traits)
+
+i <- intersect(rownames(pro.cor), traits.log$`Donor ID`) #133 donors
+
+#traits.pro <- traits[traits$`Donor ID` %in% i,]
+
+traits.pro <- traits.log[traits$`Donor ID` %in% i,]
+View(traits.pro)
+pro.cor.order <- pro.cor[traits.pro$`Donor ID`,]
+View(pro.cor.order)
+
+all(rownames(pro.cor.order)==traits.pro$`Donor ID`) # TRUE
+head(rownames(pro.cor.order))
+head(traits.pro$`Donor ID`)
+pro.cor.order[head(rownames(pro.cor.order)),1:10]
+pro.cor[head(rownames(pro.cor.order)),1:10]
+
+identical(pro.cor[rownames(pro.cor.order),],pro.cor.order) # TRUE
+
+colnames(traits.pro)
+
+rownames(traits.pro) <- NULL
+traits.pro.cor <- traits.pro %>%
+  column_to_rownames(var="Donor ID") %>%
+  select(-any_of(c('Sex','diabetes')))
+View(traits.pro.cor)
+dim(traits.pro.cor) # 133 rows (donors) x 28 columns (traits)
+
+View(traits.pro)
+View(traits.pro.cor)
+
+write.csv(traits.pro.cor, "output/traits_numerical_proc_for_protein_correlation.csv")
+write.csv(traits.pro, "output/traits_proc_for_protein_correlation.csv", row.names = F)
+write.csv(pro.cor.order, "output/protein_proc_for_traits_correlation.csv")
+
+traits.pro <- read.csv("output/traits_proc_for_protein_correlation.csv", check.names = F)
+traits.pro.cor <- read.csv("output/traits_numerical_proc_for_protein_correlation.csv", row.names=1, check.names = F)
+pro.cor.order <- read.csv("output/protein_proc_for_traits_correlation.csv", row.names = 1)
+
+
+```
+
+```{r traits-protein correlation, all donors}
+pro.cor.order <- read.csv("output/protein_proc_for_traits_correlation.csv", row.names = 1)
+traits.pro <- read.csv("output/traits_proc_for_protein_correlation.csv", check.names = F)
+traits.pro.cor <- read.csv("output/traits_numerical_proc_for_protein_correlation.csv", row.names=1, check.names = F)
+
+#df <- pro.cor.order
+df <- log2(pro.cor.order)
+R.df <- data.frame(matrix(nrow = 28, ncol = 0))
+p.df <- data.frame(matrix(nrow = 28, ncol = 0))
+index <- 1
+for (i in 1:ncol(df)){
+  res.cor <- rcorr(as.matrix(cbind(df[,i],traits.pro.cor)),type="pearson") # selected traits are already logged 
+  
+  R.df[index] <- res.cor$r[-1,1]
+  p.df[index] <- res.cor$P[-1,1]
+  index <- index+1
+}
+View(R.df)
+colnames(R.df) <- colnames(pro.cor.order)
+rownames(R.df) <- colnames(traits.pro.cor)
+
+View(p.df)
+colnames(p.df) <- colnames(pro.cor.order)
+rownames(p.df) <- colnames(traits.pro.cor)
+
+pro.traits.R <- as.data.frame(t(R.df))
+pro.traits.p <- as.data.frame(t(p.df))
+View(pro.traits.R)
+
+pro.traits.padj <- as.data.frame(lapply(pro.traits.p, function(x) p.adjust(x, method = 'fdr')))
+colnames(pro.traits.padj) <- paste0("padj_", colnames(pro.traits.p))
+rownames(pro.traits.padj) <- rownames(pro.traits.p)
+colnames(pro.traits.p) <- paste0("pvalue_", colnames(pro.traits.p))
+colnames(pro.traits.R) <- paste0("R_", colnames(pro.traits.R))
+
+count.cor.pro <- as.data.frame(colSums(pro.traits.padj<0.05))
+View(count.cor.pro)
+
+write.csv(count.cor.pro, "output/LOGtraits_correlate_LOG2pro50_number_new.csv")
+#write_xlsx(count.cor.pro, "output/LOGtraits_correlate_LOGpro50_number_new.xlsx",
+#           format_headers = F)
+
+#write_xlsx(count.cor.pro, "output/LOGtraits_correlate_pro85_number.xlsx",
+#           format_headers = F)
+#write_xlsx(count.cor.pro, "output/LOGtraits_correlate_LOGpro85_number.xlsx",
+#           format_headers = F)
+
+#write_xlsx(count.cor.pro, "output/LOGtraits_correlate_pro50_number.xlsx",
+#           format_headers = F)
+#write_xlsx(count.cor.pro, "output/traits_correlate_pro50_number.xlsx",
+#           format_headers = F)
+
+#write_xlsx(count.cor.pro, "output/LOGtraits_correlate_LOGpro50_number.xlsx",
+#           format_headers = F)
+
+pro.traits.correlation <- cbind(pro.traits.R, pro.traits.p, pro.traits.padj)
+View(pro.traits.correlation)
+colnames(pro.traits.correlation)
+colnames(pro.traits.correlation) <- gsub("\\ ","_",colnames(pro.traits.correlation))
+colnames(pro.traits.correlation) <- gsub("\\(","",colnames(pro.traits.correlation))
+colnames(pro.traits.correlation) <- gsub("\\)","",colnames(pro.traits.correlation))
+colnames(pro.traits.correlation) <- gsub("\\/",".",colnames(pro.traits.correlation))
+
+pro.traits.correlation$Protein.Ids <- rownames(pro.traits.correlation)
+pro.traits.correlation <- pro.traits.correlation %>%
+  left_join(pro.filter[,c("Protein.Ids","Genes","ENSG")])
+dim(pro.traits.correlation) #7724 rows
+length(unique(pro.traits.correlation$ENSG)) #7711
+
+pro.traits.correlation[which(is.na(pro.traits.correlation$ENSG)), ]# 2 NA
+pro.traits.correlation[which(pro.traits.correlation$ENSG=="NULL"),] # 2 NULL
+
+
+dim(pro.traits.correlation) #7724 rows
+dup <- pro.traits.correlation %>% group_by(ENSG) %>% dplyr::filter(n() > 1)
+View(dup) # some Protein.Ids have multiple ENSG
+
+# reorder to put the same traits together
+x <- 1:28
+y <- 29:56
+z <- 57:84
+d <- as.matrix(data.frame(x,y,z))
+index <- as.vector(unlist(apply(d, 1, c)))
+index
+pro.traits.correlation.order <- pro.traits.correlation[,c(index,85:87)] %>%
+  relocate(Protein.Ids:ENSG, .before = R_Age)
+View(pro.traits.correlation.order)
+
+write.csv(pro.traits.correlation.order, "output/islets_LOG2proteomics50_LOGfunction_correlation.csv", row.names = F)
+
+```
+
+```{r traits-protein correlation, ND donors}
+
+# correlate proteins with traits 
+
+pro.filter <- read.table(file="output/protein_filter50.txt",sep = "\t",header = T, row.names = 1)
+?read.table
+traits.log <- read.csv(file = "output/islets_traits_log.csv", check.names = F)
+View(pro.filter)
+View(traits.log)
+pro.cor <- pro.filter[,-c(2:4)] %>%
+  mutate_at(-1, as.numeric)
+pro.cor <- pro.cor[order(rowSums(pro.cor[,-1]), decreasing = T),] # order row sum from high to low abundance
+pro.cor <- pro.cor[!duplicated(pro.cor$Protein.Ids),]  # remove duplicated protein IDs (none) by keeping the most abundant one
+
+dim(pro.cor) # 50% - 7724 / 85% - 7129, same as protein IDs above
+str(pro.cor)
+View(pro.cor)
+
+pro.cor <- as.data.frame(t(pro.cor[,-1])) 
+
+
+
+View(traits)
+traits.log <- traits.log |> filter(diabetes == "ND")
+
+i <- intersect(rownames(pro.cor), traits.log$`Donor ID`) #117 donors
+
+#traits.pro <- traits[traits$`Donor ID` %in% i,]
+
+traits.pro <- traits.log[traits$`Donor ID` %in% i,]
+View(traits.pro)
+pro.cor.order <- pro.cor[traits.pro$`Donor ID`,]
+View(pro.cor.order)
+all(rownames(pro.cor.order)==traits.pro$`Donor ID`) # TRUE
+head(rownames(pro.cor.order))
+head(traits.pro$`Donor ID`)
+pro.cor.order[head(rownames(pro.cor.order)),1:10]
+pro.cor[head(rownames(pro.cor.order)),1:10]
+
+identical(pro.cor[rownames(pro.cor.order),],pro.cor.order) # TRUE
+
+colnames(traits.pro)
+rownames(traits.pro) <- NULL
+traits.pro.cor <- traits.pro %>%
+  column_to_rownames(var="Donor ID") %>%
+  select(-any_of(c('Sex','diabetes')))
+View(traits.pro.cor)
+dim(traits.pro.cor) # 117 rows (donors) x 28 columns (traits)
+
+#df <- pro.cor.order
+df <- log10(pro.cor.order)
+R.df <- data.frame(matrix(nrow = 28, ncol = 0))
+p.df <- data.frame(matrix(nrow = 28, ncol = 0))
+index <- 1
+View(df)
+
+for (i in 1:ncol(df)){
+  res.cor <- rcorr(as.matrix(cbind(df[,i],traits.pro.cor)),type="pearson") # selected traits are already logged 
+  
+  R.df[index] <- res.cor$r[-1,1]
+  p.df[index] <- res.cor$P[-1,1]
+  index <- index+1
+}
+
+View(R.df)
+colnames(R.df) <- colnames(pro.cor.order)
+rownames(R.df) <- colnames(traits.pro.cor)
+
+View(p.df)
+colnames(p.df) <- colnames(pro.cor.order)
+rownames(p.df) <- colnames(traits.pro.cor)
+
+pro.traits.R <- as.data.frame(t(R.df))
+pro.traits.p <- as.data.frame(t(p.df))
+View(pro.traits.R)
+
+pro.traits.padj <- as.data.frame(lapply(pro.traits.p, function(x) p.adjust(x, method = 'fdr')))
+colnames(pro.traits.padj) <- paste0("padj_", colnames(pro.traits.p))
+rownames(pro.traits.padj) <- rownames(pro.traits.p)
+colnames(pro.traits.p) <- paste0("pvalue_", colnames(pro.traits.p))
+colnames(pro.traits.R) <- paste0("R_", colnames(pro.traits.R))
+View(pro.traits.padj)
+count.cor.pro <- as.data.frame(colSums(pro.traits.padj<0.05))
+View(count.cor.pro)
+
+write.csv(count.cor.pro, "output/LOGtraits_correlate_LOGpro50_number_ND.csv")
+
+
+pro.traits.correlation <- cbind(pro.traits.R, pro.traits.p, pro.traits.padj)
+View(pro.traits.correlation)
+colnames(pro.traits.correlation)
+colnames(pro.traits.correlation) <- gsub("\\ ","_",colnames(pro.traits.correlation))
+colnames(pro.traits.correlation) <- gsub("\\(","",colnames(pro.traits.correlation))
+colnames(pro.traits.correlation) <- gsub("\\)","",colnames(pro.traits.correlation))
+colnames(pro.traits.correlation) <- gsub("\\/",".",colnames(pro.traits.correlation))
+
+pro.traits.correlation$Protein.Ids <- rownames(pro.traits.correlation)
+pro.traits.correlation <- pro.traits.correlation %>%
+  left_join(pro.filter[,c("Protein.Ids","Genes","ENSG")])
+dim(pro.traits.correlation) # 7724 rows
+length(unique(pro.traits.correlation$ENSG)) #7711
+
+dup <- pro.traits.correlation %>% group_by(ENSG) %>% filter(n()>1)
+View(dup)
+pro.traits.correlation[which(is.na(pro.traits.correlation$Genes)), ]# 2 NA
+pro.traits.correlation[which(pro.traits.correlation$Genes=="NULL"),] # 0 NULL
+
+
+dim(pro.traits.correlation) #7131 rows
+dup <- pro.traits.correlation %>% group_by(ENSG) %>% dplyr::filter(n() > 1)
+View(dup) # some Protein.Ids have multiple ENSG
+
+# reorder to put the same traits together
+x <- 1:28
+y <- 29:56
+z <- 57:84
+d <- as.matrix(data.frame(x,y,z))
+index <- as.vector(unlist(apply(d, 1, c)))
+index
+pro.traits.correlation.order <- pro.traits.correlation[,c(index,85:87)] %>%
+  relocate(Protein.Ids:ENSG, .before = R_Age)
+View(pro.traits.correlation.order)
+
+
+write.csv(pro.traits.correlation.order, "output/islets_LOGproteomics50_LOGfuction_correlation_ND.csv",
+           row.names = F)
+
+```
+
+
+
+
+```{r lm adjust T2D functions}
+# function to format trait col names
+format_trait_names <- function(df){
+    colnames(df) <- gsub("\\ ","_",colnames(df))
+    colnames(df) <- gsub("\\(","",colnames(df))
+    colnames(df) <- gsub("\\)","",colnames(df))
+    colnames(df) <- gsub("\\/",".",colnames(df))
+    return(df)
+}
+
+
+# function to calculate linear regression for every gene and trait, using gene as dependent, trait as predictor, and diabetes status as a categorical variable
+#gene.df <- pro.log
+#trait.df <- traits.pro.cor
+#trait.adjust <- traits.pro
+
+lm_gene_trait <- function(gene.df,trait.df, trait.adjust){
+  
+  # create empty data frames to save results
+  coeff_trait <- data.frame(matrix(nrow = 0, ncol = 0))
+  coeff_diabetes <- data.frame(matrix(nrow = 0, ncol = 0))
+  p_trait <- data.frame(matrix(nrow = 0, ncol = 0))
+  p_diabetes <- data.frame(matrix(nrow = 0, ncol = 0))
+  R2_adj <- data.frame(matrix(nrow = 0, ncol = 0))
+  p_model <- data.frame(matrix(nrow = 0, ncol = 0))
+  
+  # run linear regression for each gene-trait pair, using diabetes status as covariate
+  for (i in 1:ncol(gene.df)){
+    for (j in 1:ncol(trait.df)){
+      
+    
+      data <- cbind(gene.df[i], trait.df[j], trait.adjust["diabetes"])
+      colnames(data) <- c("gene","trait","diabetes")
+      model <- lm(gene ~ trait + diabetes, data=data)
+      coefficients.df <- as.data.frame(summary(model)[["coefficients"]])
+      coeff_trait[i,j] <- coefficients.df["trait","Estimate"]
+      coeff_diabetes[i,j] <- coefficients.df["diabetesT2D","Estimate"] #If the coefficient is positive, it means there is a positive effect associated with having "T2D
+      p_trait[i,j] <- coefficients.df["trait","Pr(>|t|)"]
+      p_diabetes[i,j] <- coefficients.df["diabetesT2D","Pr(>|t|)"]
+      R2_adj[i,j] <- summary(model)[["adj.r.squared"]]
+      p_model[i,j] <- summary(model)$fstatistic %>% {unname(pf(.[1],.[2],.[3],lower.tail=F))}
+    }
+  }
+  
+  # function to add row and col names
+  row.col.names <- function(df){
+    # add colnames (traits) and rownames (genes)
+    rownames(df) <- colnames(gene.df)
+    colnames(df) <- colnames(trait.df)
+    return(df)
+  }
+  
+  # use the function to add row and colnames
+  coeff_trait <- row.col.names(coeff_trait)
+  coeff_diabetes <- row.col.names(coeff_diabetes)
+  p_trait <- row.col.names(p_trait)
+  p_diabetes <- row.col.names(p_diabetes)
+  R2_adj <- row.col.names(R2_adj)
+  p_model <- row.col.names(p_model)
+  
+  # function to adjust p value and add row/col names 
+  adjust_pval <- function(df){
+  padj.df <- as.data.frame(lapply(df, function(x) p.adjust(x, method = 'fdr')))
+  rownames(padj.df) <- rownames(df)
+  colnames(padj.df) <- colnames(df)
+  return(padj.df)
+  }
+  
+  # use the function to get adjusted p values
+  padj_trait <- adjust_pval(p_trait)
+  padj_diabetes <- adjust_pval(p_diabetes)
+  padj_model <- adjust_pval(p_model)
+  
+  # function to annotate col names
+  annotate_colnames <- function(df,x){
+    colnames(df) <- paste0(x, colnames(df))
+    return(df)
+  }
+  
+  # use the function to change col names
+  coeff_trait <<- annotate_colnames(coeff_trait, "coeff_")
+  coeff_diabetes <<- annotate_colnames(coeff_diabetes, "coeff.T2D_")
+  p_trait <<- annotate_colnames(p_trait, "pvalue_")
+  p_diabetes <<- annotate_colnames(p_diabetes, "pvalue.T2D_")
+  padj_trait <<- annotate_colnames(padj_trait, "padj_")
+  padj_diabetes <<- annotate_colnames(padj_diabetes, "padj.T2D_")
+  R2_adj <<- annotate_colnames(R2_adj, "R2adj_")
+  p_model <<- annotate_colnames(p_model, "p.model_")
+  padj_model <<- annotate_colnames(padj_model, "padj.model_")
+
+}
+
+
+# function to calculate and formate significant gene number
+count_genes <- function(padj.df,colname){
+  count.sig.gene <- as.data.frame(colSums(padj_trait <0.05))
+  colnames(count.cor.rna) <- colname
+  count.sig.gene$traits <- gsub("padj_","",rownames(count.sig.gene))
+  write.csv(count.sig.gene, paste0("output/islets_LR_trait_",colname,"_T2Dadjusted.csv"), row.names = F)
+  print(paste0("Output is saved in output/islets_LR_trait_",colname,"_T2Dadjusted.csv"))
+}
+
+
+# function to format and save all stats from lm results
+save_lm_results <- function(results, trait.names, anno.df, id.column, name){
+  
+  # reorder to have the stats of the same trait together
+  col.index <- c()
+  for (i in 1:length(trait.names)){
+    col.index <- append(col.index,grep(trait.names[i],colnames(results)))
+  }
+  results <- results[,col.index]
+  
+  # add gene annotations
+  results <- results %>% 
+    rownames_to_column(var = "ID") %>%
+    left_join(anno.df, by = c("ID"= id.column)) %>%
+    relocate(colnames(anno.df)[colnames(anno.df)!=id.column], .after = "ID")
+  
+  write.csv(results, paste0("output/islets_LR_traits_", name, "_results.csv"), row.names = F)
+  print(paste0("Output is saved in output/islets_LR_traits_", name, "_results.csv"))
+  
+  return(results)
+}
+
+```
+
+
+```{r lm adjust T2D and batch functions}
+# function to format trait col names
+format_trait_names <- function(df){
+    colnames(df) <- gsub("\\ ","_",colnames(df))
+    colnames(df) <- gsub("\\(","",colnames(df))
+    colnames(df) <- gsub("\\)","",colnames(df))
+    colnames(df) <- gsub("\\/",".",colnames(df))
+    return(df)
+}
+
+
+# function to calculate linear regression for every gene and trait, using gene as dependent, trait as predictor, and diabetes status as a categorical variable
+#gene.df <- pro.log
+#trait.df <- traits.pro.cor
+#trait.adjust <- traits.pro
+
+#gene.df <- rna.cor.order
+#trait.df <- traits.rna.cor
+#trait.adjust <- traits.rna
+
+lm_gene_trait_batch <- function(gene.df,trait.df, trait.adjust){
+  
+  # create empty data frames to save results
+  coeff_trait <- data.frame(matrix(nrow = 0, ncol = 0))
+  coeff_diabetes <- data.frame(matrix(nrow = 0, ncol = 0))
+  
+  p_trait <- data.frame(matrix(nrow = 0, ncol = 0))
+  p_diabetes <- data.frame(matrix(nrow = 0, ncol = 0))
+  
+  R2_adj <- data.frame(matrix(nrow = 0, ncol = 0))
+  p_model <- data.frame(matrix(nrow = 0, ncol = 0))
+  
+  # run linear regression for each gene-trait pair, using diabetes status and batch as covariate
+  for (i in 1:ncol(gene.df)){
+    for (j in 1:ncol(trait.df)){
+      
+    
+      data <- cbind(gene.df[i], trait.df[j], trait.adjust["diabetes"], trait.adjust["batch"])
+      colnames(data) <- c("gene","trait","diabetes","batch")
+      model <- lm(gene ~ trait + diabetes + batch, data=data)
+      coefficients.df <- as.data.frame(summary(model)[["coefficients"]])
+      
+      coeff_trait[i,j] <- coefficients.df["trait","Estimate"]
+      coeff_diabetes[i,j] <- coefficients.df["diabetesT2D","Estimate"] #If the coefficient is positive, it means there is a positive effect associated with having "T2D
+      
+      p_trait[i,j] <- coefficients.df["trait","Pr(>|t|)"]
+      p_diabetes[i,j] <- coefficients.df["diabetesT2D","Pr(>|t|)"]
+     
+      R2_adj[i,j] <- summary(model)[["adj.r.squared"]]
+      p_model[i,j] <- summary(model)$fstatistic %>% {unname(pf(.[1],.[2],.[3],lower.tail=F))}
+    }
+  }
+  
+  # function to add row and col names
+  row.col.names <- function(df){
+    # add colnames (traits) and rownames (genes)
+    rownames(df) <- colnames(gene.df)
+    colnames(df) <- colnames(trait.df)
+    return(df)
+  }
+  
+  # use the function to add row and colnames
+  coeff_trait <- row.col.names(coeff_trait)
+  coeff_diabetes <- row.col.names(coeff_diabetes)
+ 
+  p_trait <- row.col.names(p_trait)
+  p_diabetes <- row.col.names(p_diabetes)
+ 
+  R2_adj <- row.col.names(R2_adj)
+  p_model <- row.col.names(p_model)
+  
+  # function to adjust p value and add row/col names 
+  adjust_pval <- function(df){
+  padj.df <- as.data.frame(lapply(df, function(x) p.adjust(x, method = 'fdr')))
+  rownames(padj.df) <- rownames(df)
+  colnames(padj.df) <- colnames(df)
+  return(padj.df)
+  }
+  
+  # use the function to get adjusted p values
+  padj_trait <- adjust_pval(p_trait)
+  padj_diabetes <- adjust_pval(p_diabetes)
+  padj_model <- adjust_pval(p_model)
+  
+  # function to annotate col names
+  annotate_colnames <- function(df,x){
+    colnames(df) <- paste0(x, colnames(df))
+    return(df)
+  }
+  
+  # use the function to change col names
+  coeff_trait <<- annotate_colnames(coeff_trait, "coeff_")
+  coeff_diabetes <<- annotate_colnames(coeff_diabetes, "coeff.T2D_")
+  p_trait <<- annotate_colnames(p_trait, "pvalue_")
+  p_diabetes <<- annotate_colnames(p_diabetes, "pvalue.T2D_")
+  padj_trait <<- annotate_colnames(padj_trait, "padj_")
+  padj_diabetes <<- annotate_colnames(padj_diabetes, "padj.T2D_")
+  R2_adj <<- annotate_colnames(R2_adj, "R2adj_")
+  p_model <<- annotate_colnames(p_model, "p.model_")
+  padj_model <<- annotate_colnames(padj_model, "padj.model_")
+
+}
+
+
+# function to calculate and formate significant gene number
+count_genes <- function(padj.df,colname){
+  count.sig.gene <- as.data.frame(colSums(padj_trait <0.05))
+  colnames(count.cor.rna) <- colname
+  count.sig.gene$traits <- gsub("padj_","",rownames(count.sig.gene))
+  write.csv(count.sig.gene, paste0("output/islets_LR_trait_",colname,"_T2D_batch_adjusted.csv"), row.names = F)
+  print(paste0("Output is saved in output/islets_LR_trait_",colname,"_T2D_batch_adjusted.csv"))
+}
+
+
+# function to format and save all stats from lm results
+save_lm_results <- function(results, trait.names, anno.df, id.column, name){
+  
+  # reorder to have the stats of the same trait together
+  col.index <- c()
+  for (i in 1:length(trait.names)){
+    col.index <- append(col.index,grep(trait.names[i],colnames(results)))
+  }
+  results <- results[,col.index]
+  
+  # add gene annotations
+  results <- results %>% 
+    rownames_to_column(var = "ID") %>%
+    left_join(anno.df, by = c("ID"= id.column)) %>%
+    relocate(colnames(anno.df)[colnames(anno.df)!=id.column], .after = "ID")
+  
+  write.csv(results, paste0("output/islets_LR_traits_", name, "_batch_adjusted_results.csv"), row.names = F)
+  print(paste0("Output is saved in output/islets_LR_traits_", name, "_batch_adjusted_results.csv"))
+  
+  return(results)
+}
+
+```
+
+
+
+```{r trait-protein linear regression}
+
+
+
+traits.pro <- read.csv("output/traits_proc_for_protein_correlation.csv", check.names = F)
+traits.pro.cor <- read.csv("output/traits_numerical_proc_for_protein_correlation.csv", row.names=1, check.names = F)
+pro.cor.order <- read.csv("output/RNA_proc_for_traits_correlation.csv", row.names = 1)
+
+# Use the customized function to format trait colnames
+traits.pro <- format_trait_names(traits.pro)
+traits.pro.cor <- format_trait_names(traits.pro.cor)
+
+View(traits.pro)
+View(traits.pro.cor)
+View(pro.cor.order)
+
+pro.log <- log2(pro.cor.order)
+
+# use the customized function to calculate linear regression for every gene and trait, using gene as dependent, trait as predictor, and diabetes status as a categorical variable
+lm_gene_trait(pro.log, traits.pro.cor,traits.pro) # took ~ 20 min to finish 
+
+View(coeff_trait)
+View(coeff_diabetes)
+View(p_trait)
+View(p_diabetes)
+View(R2_adj)
+View(padj_trait)
+View(padj_diabetes)
+View(p_model)
+View(padj_model)
+
+# use customized function to save the number of significant genes
+count_genes(padj_trait, "LOG2protein_number") # "Output is saved in output/islets_LR_trait_LOG2protein_number_T2Dadjusted.csv"
+
+
+# use the function to format and save lm results
+
+#View(raw.anno)
+#write.csv(raw.anno, "output/rawcount_anno.csv", row.names = F)
+
+pro.filter <- read.table(file="output/protein_filter50.txt",sep = "\t",header = T, row.names = 1)
+View(pro.filter)
+
+results.df <- cbind(coeff_trait, coeff_diabetes, p_trait, p_diabetes, p_model,
+                padj_trait, padj_diabetes, padj_model, R2_adj)
+View(results.df)
+
+trait.names <- colnames(traits.pro.cor)
+
+pro.lm.results <- save_lm_results(results.df, trait.names, pro.filter[,c(1,3,4)], 
+                "Protein.Ids",  # the column name that match the rownames(ID) in results.df
+                "LOG2protein")  # "Output is saved in output/islets_LR_traits_protein_results.csv"
+
+pro.lm.results <- read.csv("output/islets_LR_traits_LOG2protein_results.csv")
+
+View(pro.lm.results)
+
+dim(pro.lm.results) # 7724 rows
+length(unique(pro.lm.results$ENSG)) #7711
+
+dup <- pro.lm.results %>% group_by(ID) %>% filter(n()>1)
+View(dup)
+
+pro.lm.results[which(is.na(pro.lm.results$ENSG)), ]# 282 NA
+pro.lm.results[which(is.na(pro.lm.results$Genes)), ]# 282 NA
+pro.lm.results[which(pro.lm.results$Genes=="NULL"), ]# 0 NULL
+
+
+
+```
+
+
+```{r remove some accidental duplicate columns in protein lm results}
+
+pro.lm.results <- read.csv("output/islets_LR_traits_LOG2protein_results.csv", check.names = F)
+View(pro.lm.results)
+colnames(pro.lm.results)
+dup.index <- grep("\\.1", colnames(pro.lm.results)) 
+pro.lm.results <- pro.lm.results[-dup.index]
+write.csv(pro.lm.results, "output/islets_LR_traits_LOG2protein_results.csv", row.names = F)
+
+```
+
+
+
+```{r trait-RNA prepare data}
+# correlate RNAs with logged traits =====================
+traits.log <- read.csv(file = "output/islets_traits_log.csv", check.names = F)
+norm.data <- read.table(sep="\t",file="output/Norm_vst_islets_oneBatch50.txt", 
+            row.names=1, header = T)
+View(traits.log)
+View(norm.data)
+dim(norm.data) # 20806 genes
+rna.cor <- as.data.frame(t(norm.data)) 
+
+i <- intersect(rownames(rna.cor), traits.log$`Donor ID`) # 89 donors
+rownames(rna.cor)[-which(rownames(rna.cor) %in% traits.log$`Donor ID`)] # don't have perifusion on R419
+
+traits.rna <- traits.log[traits.log$`Donor ID` %in% i,]
+View(traits.rna)
+rna.cor.order <- rna.cor[traits.rna$`Donor ID`,]
+View(rna.cor.order)
+all(rownames(rna.cor.order)==traits.rna$`Donor ID`) # TRUE
+head(rownames(rna.cor.order))
+head(traits.rna$`Donor ID`)
+rna.cor.order[head(rownames(rna.cor.order)),1:10]
+rna.cor[head(rownames(rna.cor.order)),1:10]
+
+identical(rna.cor[rownames(rna.cor.order),],rna.cor.order) # TRUE
+
+colnames(traits.rna)
+rownames(traits.rna) <- NULL
+traits.rna.cor <- traits.rna %>%
+  column_to_rownames(var="Donor ID") %>%
+  dplyr::select(-any_of(c('Sex','diabetes')))
+View(traits.rna.cor)
+dim(traits.rna.cor) # 89 rows (donors) x 28 columns (traits)
+
+View(traits.rna)
+batch.df <- read.table("input/Proteomics_RNAseqSamples_Batches.txt")
+colnames(batch.df) <- c("Donor ID", "batch")
+View(batch.df)
+traits.rna <- traits.rna %>%
+  left_join(batch.df)
+
+write.csv(traits.rna,"output/traits_proc_for_RNA_correlation.csv", row.names = F)
+write.csv(traits.rna.cor,"output/traits_numerical_proc_for_RNA_correlation.csv")
+write.csv(rna.cor.order,"output/RNA_proc_for_traits_correlation.csv")
+```
+
+```{r trait-RNA correlation all donor}
+df <- rna.cor.order
+R.df <- data.frame(matrix(nrow = 28, ncol = 0))
+p.df <- data.frame(matrix(nrow = 28, ncol = 0))
+index <- 1
+for (i in 1:ncol(df)){
+  res.cor <- rcorr(as.matrix(cbind(df[,i],traits.rna.cor)),type="pearson")
+  
+  R.df[index] <- res.cor$r[-1,1]
+  p.df[index] <- res.cor$P[-1,1]
+  index <- index+1
+}
+View(R.df)
+colnames(R.df) <- colnames(rna.cor.order)
+rownames(R.df) <- colnames(traits.rna.cor)
+
+View(p.df)
+colnames(p.df) <- colnames(rna.cor.order)
+rownames(p.df) <- colnames(traits.rna.cor)
+
+rna.traits.R <- as.data.frame(t(R.df))
+rna.traits.p <- as.data.frame(t(p.df))
+View(rna.traits.p)
+
+rna.traits.padj <- as.data.frame(lapply(rna.traits.p, function(x) p.adjust(x, method = 'fdr')))
+rownames(rna.traits.padj) <- rownames(rna.traits.p)
+View(rna.traits.padj)
+colnames(rna.traits.padj) <- paste0("padj_", colnames(rna.traits.p))
+colnames(rna.traits.p) <- paste0("pvalue_", colnames(rna.traits.p))
+colnames(rna.traits.R) <- paste0("R_", colnames(rna.traits.R))
+
+count.cor.rna <- as.data.frame(colSums(rna.traits.padj<0.05))
+colnames(count.cor.rna) <- "vstRNAs50_logTraits"
+count.cor.rna$traits <- gsub("padj_","",rownames(count.cor.rna))
+View(count.cor.rna)
+
+write.csv(count.cor.rna, "output/LOGtraits_correlate_rna50_number_new.csv",row.names=F)
+
+rna.traits.correlation <- cbind(rna.traits.R, rna.traits.p, rna.traits.padj)
+View(rna.traits.correlation)
+colnames(rna.traits.correlation)
+colnames(rna.traits.correlation) <- gsub("\\ ","_",colnames(rna.traits.correlation))
+colnames(rna.traits.correlation) <- gsub("\\(","",colnames(rna.traits.correlation))
+colnames(rna.traits.correlation) <- gsub("\\)","",colnames(rna.traits.correlation))
+
+write.csv(raw.counts,"output/raw_counts.csv", row.names = F)
+raw.counts <- read.csv("output/raw_counts.csv")
+View(raw.counts)
+colnames(raw.counts)[1:2]
+rna.traits.correlation$ENSG <- rownames(rna.traits.correlation)
+rna.traits.correlation <- rna.traits.correlation %>%
+  left_join(raw.counts[,c("GeneID","GeneName")],by=c("ENSG"="GeneID"))
+
+dim(rna.traits.correlation) # 20806 rows
+length(unique(rna.traits.correlation$ENSG)) #20806
+
+# reorder to put the same traits together
+x <- 1:28
+y <- 29:56
+z <- 57:84
+d <- as.matrix(data.frame(x,y,z))
+index <- as.vector(unlist(apply(d, 1, c)))
+index
+rna.traits.correlation.order <- rna.traits.correlation[,c(index,85:86)] %>%
+  relocate(ENSG:GeneName, .before = R_Age)
+View(rna.traits.correlation.order)
+
+write.csv(rna.traits.correlation.order, "output/islets_RNAseq50_LOGfuction_correlation.csv",
+            row.names = F)
+
+#write.table(rna.traits.correlation.order, "output/islets_RNAseq50_LOGfuction_correlation.txt",
+#            sep="\t", row.names = F)
+#write_xlsx(rna.traits.correlation.order, "output/islets_RNAseq50_LOGfuction_correlation.xlsx",
+#           format_headers = F)
+
+
+```
+
+
+```{r trait-RNA correlation ND donor}
+# correlate RNAs with logged traits =====================
+traits.log <- read.csv(file = "output/islets_traits_log.csv", check.names = F)
+norm.data <- read.table(sep="\t",file="output/Norm_vst_islets_oneBatch50.txt", 
+            row.names=1, header = T)
+View(traits.log)
+View(norm.data)
+dim(norm.data) # 20806 genes
+rna.cor <- as.data.frame(t(norm.data)) 
+
+i <- intersect(rownames(rna.cor), traits.log[traits.log$diabetes=="ND",]$`Donor ID`) # 81 donors
+
+#rownames(rna.cor)[-which(rownames(rna.cor) %in% traits.log$`Donor ID`)] # don't have perifusion on R419
+
+traits.rna <- traits.log[traits.log$`Donor ID` %in% i,]
+View(traits.rna)
+rna.cor.order <- rna.cor[traits.rna$`Donor ID`,]
+View(rna.cor.order)
+all(rownames(rna.cor.order)==traits.rna$`Donor ID`) # TRUE
+head(rownames(rna.cor.order))
+head(traits.rna$`Donor ID`)
+rna.cor.order[head(rownames(rna.cor.order)),1:10]
+rna.cor[head(rownames(rna.cor.order)),1:10]
+
+identical(rna.cor[rownames(rna.cor.order),],rna.cor.order) # TRUE
+
+colnames(traits.rna)
+rownames(traits.rna) <- NULL
+traits.rna.cor <- traits.rna %>%
+  column_to_rownames(var="Donor ID") %>%
+  dplyr::select(-any_of(c('Sex','diabetes')))
+View(traits.rna.cor)
+dim(traits.rna.cor) # 81 rows (donors) x 28 columns (traits)
+
+df <- rna.cor.order
+R.df <- data.frame(matrix(nrow = 28, ncol = 0))
+p.df <- data.frame(matrix(nrow = 28, ncol = 0))
+index <- 1
+for (i in 1:ncol(df)){
+  res.cor <- rcorr(as.matrix(cbind(df[,i],traits.rna.cor)),type="pearson")
+  
+  R.df[index] <- res.cor$r[-1,1]
+  p.df[index] <- res.cor$P[-1,1]
+  index <- index+1
+}
+View(R.df)
+colnames(R.df) <- colnames(rna.cor.order)
+rownames(R.df) <- colnames(traits.rna.cor)
+
+View(p.df)
+colnames(p.df) <- colnames(rna.cor.order)
+rownames(p.df) <- colnames(traits.rna.cor)
+
+rna.traits.R <- as.data.frame(t(R.df))
+rna.traits.p <- as.data.frame(t(p.df))
+View(rna.traits.p)
+
+rna.traits.padj <- as.data.frame(lapply(rna.traits.p, function(x) p.adjust(x, method = 'fdr')))
+rownames(rna.traits.padj) <- rownames(rna.traits.p)
+View(rna.traits.padj)
+
+colnames(rna.traits.padj) <- paste0("padj_", colnames(rna.traits.p))
+colnames(rna.traits.p) <- paste0("pvalue_", colnames(rna.traits.p))
+colnames(rna.traits.R) <- paste0("R_", colnames(rna.traits.R))
+
+count.cor.rna <- as.data.frame(colSums(rna.traits.padj<0.05))
+colnames(count.cor.rna) <- "vstRNAs50_logTraits_ND"
+count.cor.rna$traits <- gsub("padj_","",rownames(count.cor.rna))
+View(count.cor.rna)
+
+write.csv(count.cor.rna, "output/LOGtraits_correlate_rna50_number_ND.csv",row.names=F)
+
+rna.traits.correlation <- cbind(rna.traits.R, rna.traits.p, rna.traits.padj)
+View(rna.traits.correlation)
+colnames(rna.traits.correlation)
+colnames(rna.traits.correlation) <- gsub("\\ ","_",colnames(rna.traits.correlation))
+colnames(rna.traits.correlation) <- gsub("\\(","",colnames(rna.traits.correlation))
+colnames(rna.traits.correlation) <- gsub("\\)","",colnames(rna.traits.correlation))
+
+
+raw.counts <- read.csv("output/raw_counts.csv")
+View(raw.counts)
+colnames(raw.counts)[1:2]
+rna.traits.correlation$ENSG <- rownames(rna.traits.correlation)
+rna.traits.correlation <- rna.traits.correlation %>%
+  left_join(raw.counts[,c("GeneID","GeneName")],by=c("ENSG"="GeneID"))
+
+dim(rna.traits.correlation) # 20806 rows
+length(unique(rna.traits.correlation$ENSG)) #20806
+
+# reorder to put the same traits together
+x <- 1:28
+y <- 29:56
+z <- 57:84
+d <- as.matrix(data.frame(x,y,z))
+index <- as.vector(unlist(apply(d, 1, c)))
+index
+rna.traits.correlation.order <- rna.traits.correlation[,c(index,85:86)] %>%
+  relocate(ENSG:GeneName, .before = R_Age)
+View(rna.traits.correlation.order)
+
+write.csv(rna.traits.correlation.order, "output/islets_RNAseq50_LOGfuction_correlation_ND.csv",
+            row.names = F)
+
+#write.table(rna.traits.correlation.order, "output/islets_RNAseq50_LOGfuction_correlation.txt",
+#            sep="\t", row.names = F)
+#write_xlsx(rna.traits.correlation.order, "output/islets_RNAseq50_LOGfuction_correlation.xlsx",
+#           format_headers = F)
+
+
+```
+
+```{r trait-RNA linear regression T2D adjusted}
+
+#traits.log <- read.csv(file = "output/islets_traits_log.csv", check.names = F)
+norm.data <- read.table(sep="\t",file="output/Norm_vst_islets_oneBatch50.txt", 
+            row.names=1, header = T)
+
+View(traits.rna.cor)
+View(rna.cor.order)
+# create empty data frame to store results
+
+traits.rna <- read.csv("output/traits_proc_for_RNA_correlation.csv", check.names = F)
+traits.rna.cor <- read.csv("output/traits_numerical_proc_for_RNA_correlation.csv", check.names = F, row.names = 1)
+rna.cor.order <- read.csv("output/RNA_proc_for_traits_correlation.csv", row.names = 1)
+
+# use customized function to format trait col names
+traits.rna <- format_trait_names(traits.rna)
+traits.rna.cor <- format_trait_names(traits.rna.cor)
+
+# use customized function to calculate linear regression for every gene and trait, using gene as dependent, trait as predictor, and diabetes status as a categorical variable
+lm_gene_trait(rna.cor.order, traits.rna.cor,traits.rna) # took ~1h to finish !!!!!!
+
+
+View(coeff_trait)
+View(coeff_diabetes)
+View(p_trait)
+View(p_diabetes)
+View(R2_adj)
+View(padj_trait)
+View(padj_diabetes)
+
+
+# use the customized function to save the number of significant genes
+count_genes(padj_trait, "RNA_number") # "Output is saved in output/islets_LR_trait_RNA_number_T2Dadjusted.csv"
+
+
+# use the customized function to format lm results
+#View(raw.anno)
+#write.csv(raw.anno, "output/rawcount_anno.csv", row.names = F)
+rna.annotated <- read.csv("output/rawcount_anno.csv")
+View(rna.annotated)
+
+results.df <- cbind(coeff_trait, coeff_diabetes, p_trait, p_diabetes, 
+                    p_model,
+                padj_trait, padj_diabetes, padj_model,R2_adj)
+colnames(results.df)
+
+trait.names <- colnames(traits.rna.cor)
+
+rna.lm.results <- save_lm_results(results.df, trait.names, rna.annotated[1:5], 
+                "ensembl_gene_id", "RNA") # "Output is saved in output/islets_LR_traits_RNA_results.csv"
+View(rna.lm.results)
+
+rna.lm.results <- read.csv("output/islets_LR_traits_RNA_results.csv")
+
+dup <- rna.lm.results %>% group_by(ID) %>% filter(n()>1)
+View(dup)
+rna.lm.results[which(is.na(rna.lm.results$external_gene_name)), ]# 51 NA
+rna.lm.results[which(rna.lm.results$external_gene_name=="NULL"), ]# 0 NULL
+
+length(unique(rna.lm.results$external_gene_name)) # 18347
+dim(rna.lm.results) #20806 rows
+
+# reorder to put the same traits together
+#x <- 1:28
+#y <- 29:56
+#z <- 57:84
+#d <- as.matrix(data.frame(x,y,z))
+#index <- as.vector(unlist(apply(d, 1, c)))
+#index
+
+
+
+```
+
+```{r trait-RNA linear regression T2D&batch adjusted}
+
+#traits.log <- read.csv(file = "output/islets_traits_log.csv", check.names = F)
+#norm.data <- read.table(sep="\t",file="output/Norm_vst_islets_oneBatch50.txt", row.names=1, header = T)
+
+View(traits.rna.cor)
+View(rna.cor.order)
+# create empty data frame to store results
+
+traits.rna <- read.csv("output/traits_proc_for_RNA_correlation.csv", check.names = F)
+traits.rna.cor <- read.csv("output/traits_numerical_proc_for_RNA_correlation.csv", check.names = F)
+rna.cor.order <- read.csv("output/RNA_proc_for_traits_correlation.csv")
+
+# use customized function to format trait col names
+traits.rna <- format_trait_names(traits.rna)
+traits.rna.cor <- format_trait_names(traits.rna.cor)
+
+# use customized function to calculate linear regression for every gene and trait, using gene as dependent, trait as predictor, and diabetes status as a categorical variable
+lm_gene_trait_batch(rna.cor.order, traits.rna.cor,traits.rna) # took ~1h to finish !!!!!!
+
+
+View(coeff_trait)
+View(coeff_diabetes)
+View(p_trait)
+View(p_diabetes)
+View(R2_adj)
+View(padj_trait)
+View(padj_diabetes)
+
+
+# use the customized function to save the number of significant genes
+count_genes(padj_trait, "RNA_number") # "Output is saved in output/islets_LR_trait_RNA_number_T2D_batch_adjusted.csv"
+
+
+# use the customized function to format lm results
+#View(raw.anno)
+#write.csv(raw.anno, "output/rawcount_anno.csv", row.names = F)
+rna.annotated <- read.csv("output/rawcount_anno.csv")
+View(rna.annotated)
+
+results.df <- cbind(coeff_trait, coeff_diabetes, p_trait, p_diabetes, 
+                    p_model,
+                padj_trait, padj_diabetes, padj_model,R2_adj)
+colnames(results.df)
+
+trait.names <- colnames(traits.rna.cor)
+
+rna.lm.results <- save_lm_results(results.df, trait.names, rna.annotated[1:5], 
+                "ensembl_gene_id", "RNA") # "Output is saved in output/islets_LR_traits_RNA__batch_adjusted_results.csv"
+View(rna.lm.results)
+
+rna.lm.results <- read.csv("output/islets_LR_traits_RNA_batch_adjusted_results.csv")
+
+dup <- rna.lm.results %>% group_by(ID) %>% filter(n()>1)
+View(dup)
+rna.lm.results[which(is.na(rna.lm.results$external_gene_name)), ]# 51 NA
+rna.lm.results[which(rna.lm.results$external_gene_name=="NULL"), ]# 0 NULL
+
+length(unique(rna.lm.results$external_gene_name)) # 18347
+dim(rna.lm.results) #20806 rows
+
+# reorder to put the same traits together
+#x <- 1:28
+#y <- 29:56
+#z <- 57:84
+#d <- as.matrix(data.frame(x,y,z))
+#index <- as.vector(unlist(apply(d, 1, c)))
+#index
+
+
+
+```
+
+```{r remove some accidental duplicate columns in RNA lm results}
+
+rna.lm.results <- read.csv("output/islets_LR_traits_RNA_batch_adjusted_results.csv", check.names = F)
+View(rna.lm.results)
+colnames(rna.lm.results)
+dup.index <- grep("\\.1", colnames(rna.lm.results)) 
+rna.lm.results <- rna.lm.results[-dup.index]
+write.csv(rna.lm.results, "output/islets_LR_traits_RNA_batch_adjusted_results.csv", row.names = F)
+
+```

@@ -1,0 +1,1233 @@
+---
+title: "traits_RNA_protein_association_plots"
+author: "Howard Cen"
+date: "2023-12-08"
+output: html_document
+---
+
+```{r setup}
+
+#install.packages("tidyverse")
+library(tidyverse)
+```
+
+
+
+```{r functions}
+# format trait names
+format_trait_names <- function(df){
+  colnames(df) <- gsub("\\ ","_",colnames(df))
+  colnames(df) <- gsub("\\(","",colnames(df))
+  colnames(df) <- gsub("\\)","",colnames(df))
+  colnames(df) <- gsub("\\/",".",colnames(df))
+  return(df)
+}
+
+
+plot.lm.volcano <- function(trait.names, lm.results, Gene.column, name, CoV, abundance, pos.hjust, neg.hjust ){
+  library(tidyverse)
+  library(ggrepel) # for label text in ggplot2
+  
+  # if gene name is missing, use the gene ID
+  lm.results <- lm.results %>%
+    mutate(Gene.column=coalesce(!!rlang::sym(Gene.column),ID))
+  
+  # Create an empty list to store sig gene numbers
+  sig.number.list <- list()
+  
+  for (i in 1:length(trait.names)){
+    
+    # subset the data for one trait 
+    selected.col <- c( 1:(grep("coeff", names(lm.results))[1]-1), grep(trait.names[i], names(lm.results)) )
+    plot.df <- lm.results[,selected.col]
+    
+    # format data
+    colnames(plot.df) <- gsub(paste0("_",trait.names[i]),"", colnames(plot.df))
+    
+    # select top or neg 20 genes to label
+    plot.df <- plot.df[order(sign(plot.df$coeff)*(-log10(plot.df$padj)),decreasing = T), ] 
+    
+    pos <- plot.df %>% 
+      filter(padj<0.05 & coeff>0)
+    if(nrow(pos)>20){
+      pos <- head(pos,20)
+    } else{
+      pos <- pos
+    }
+      
+    neg <- plot.df %>% 
+      filter(padj<0.05 & coeff<0)
+    if(nrow(neg)>20){
+      neg <- tail(neg,20)
+    } else{
+      neg <- neg
+    }
+    
+    # format dataframe to plot
+    plot.df <- plot.df %>%
+      mutate(sig.trait= ifelse(padj<0.05 & coeff>0, "positive", 
+                             ifelse(padj<0.05 & coeff<0,"negative","ns")),
+             CoV.log.color = ifelse(sig.trait=="positive", log10(!!rlang::sym(CoV)),
+                                     ifelse(sig.trait=="negative",
+                                            -log10(!!rlang::sym(CoV)),NA)),
+             label = ifelse(sig.trait!="ns" &  !!rlang::sym(Gene.column) %in% c(pos[[Gene.column]], neg[[Gene.column]]), 
+                    !!rlang::sym(Gene.column), "")) 
+    ## The !! (double-bang) is used for unquoting or splicing within quasiquotation. It tells R to evaluate the expression inside the quosure and insert its value into the surrounding expression.
+    ## rlang::sym() is a function from the rlang package that is used to convert a character string into a symbol (or name). Symbols are a type of R object that represents a name or an expression.
+    
+    plot.df$sig.trait <- factor(plot.df$sig.trait, levels = c("positive","negative","ns"))
+    
+    # save the number of sig genes
+    plot.df <- plot.df %>%
+      mutate(sig.model= case_when(
+        padj<0.05 & padj.T2D<0.05 & padj.model<0.05 ~ "trait.T2D.model",
+        padj<0.05 & padj.T2D<0.05 & padj.model>=0.05 ~ "trait.T2D",
+        padj<0.05 & padj.T2D>=0.05 & padj.model<0.05 ~ "trait.model",
+        padj<0.05 & padj.T2D>=0.05 & padj.model>=0.05 ~ "trait_alone",
+        padj>=0.05 & padj.T2D<0.05 & padj.model<0.05 ~ "T2D.model",
+        padj>=0.05 & padj.T2D<0.05 & padj.model>=0.05 ~ "T2D_alone",
+        padj>=0.05 & padj.T2D>=0.05 & padj.model<0.05 ~ "model_alone",
+        padj>=0.05 & padj.T2D>=0.05 & padj.model>=0.05 ~ "ns",
+      ))
+    
+    sig.model.dat <- as.data.frame(table(plot.df$sig.model))
+
+    sig.number.list[[trait.names[i]]] <- sig.model.dat
+    
+    if (nrow(pos)+nrow(neg)==0) {
+      cat("No significant gene. Skipping interation ",i, " - ", trait.names[i], "\n")
+      next  # Skip to the next iteration
+    }
+
+    # plot volcano
+
+    ggplot(data=plot.df, 
+           aes(x=coeff, y=-log10(padj), 
+               col= CoV.log.color,
+               label=label)
+           ) +
+      
+      ylab(expression(-log[10]~(adj.~P~value))) +
+      xlab(expression("Coefficient")) +
+       
+      geom_point(aes(size= !!rlang::sym(abundance)) )+
+      scale_color_gradient2(high = "red3",mid = "white",low = "blue3",
+                            midpoint = 0,na.value = "grey80"
+                           #  space = "Lab",na.value = "grey50",guide = "colourbar",aesthetics = "colour"
+      )+
+      scale_size_continuous(range = c(0.1, 4))+
+      
+#     scale_color_manual(values = pal, limits = names(pal)) +
+      
+      geom_text_repel(
+        data=subset(plot.df,coeff>0), 
+        color="red",
+        size=5,
+        nudge_x = max(plot.df$coeff)*1.5 - subset(plot.df,coeff>0)$coeff,
+        segment.size=0.3, segment.color="grey", 
+        direction="y", 
+        hjust= pos.hjust, # adjusting this somehow reduced overlap
+        #max.iter = 100000,
+        max.overlaps = Inf)+
+      
+      geom_text_repel(
+        data=subset(plot.df,coeff<0), 
+        color="blue",
+        size=5,
+        nudge_x = min(plot.df$coeff)*1.5 - subset(plot.df,coeff<0)$coeff,
+        segment.size=0.3, segment.color="grey", 
+        direction="y", 
+        hjust = neg.hjust,
+        max.overlaps = Inf)+
+      
+      theme_minimal() +
+      
+      labs(size=expression("Abundance (log2)"),
+           color=expression("Direction signed\nCoV (log10)"),
+           title = trait.names[i]) +  
+      
+      theme(legend.position = "right",
+            legend.title.align = 0, # left align
+            legend.title = element_text(margin = margin(t = 15, unit = "pt")) # add more space on top of legend titles
+            #legend.spacing.y = unit(1,"cm")
+            ) +
+      theme(panel.grid.minor.y = element_blank(),
+            panel.grid.minor.x = element_blank(),
+            text=element_text(size=20),
+            axis.text=element_text(size=16),
+            axis.title=element_text(size=20),
+            legend.text=element_text(size=18),
+            legend.title=element_text(size=18),
+            aspect.ratio = 1/1.2, panel.grid.major = element_blank(),
+            panel.background = element_blank(), axis.line = element_line(colour = "black")) + 
+      theme(plot.title = element_text(hjust = 0.5, face = "italic", colour="grey50", size=20))
+    
+    # save figure. Remove % in file name (because trait purity_% is not allowed in file name)
+    filename=paste0("figures/",name,"_lm_", trait.names[i],".pdf")
+    ggsave(filename=gsub("%","",filename),width=10,height=6.5,units="in")
+    
+    print(paste0("The plot is saved in figures/",name,"_lm_", trait.names[i],".pdf"))
+    
+    print(paste0("Finished iteration ", i, " - ",trait.names[i]))
+  }
+  cat(capture.output(print(sig.number.list), file=paste0("output/", name, "_lm_trait_T2D_model_sig_number.txt")))
+  print(paste0("The number of ", name, " with significant trait, T2D or model is saved in output/", name, "_lm_trait_T2D_model_sig_number.txt" ))
+  sig.number.list <<- sig.number.list
+}
+
+
+plot.cor.volcano <- function(trait.names, cor.results, Gene.column, name, CoV, abundance){
+  library(tidyverse)
+  library(ggrepel) # for label text in ggplot2
+  
+  # if gene name is missing, use the gene ID
+  cor.results <- cor.results %>%
+    mutate(Gene.column=coalesce(!!rlang::sym(Gene.column), ENSG))
+  
+  for (i in 1:length(trait.names)){
+    
+    # subset the data for one trait 
+    selected.col <- c( 1:(grep("R_", names(cor.results))[1]-1), grep(trait.names[i], names(cor.results)) )
+    plot.df <- cor.results[,selected.col]
+    
+    # format data
+    colnames(plot.df) <- gsub(paste0("_",trait.names[i]),"", colnames(plot.df))
+    
+    # select top or neg 20 genes to label
+    plot.df <- plot.df[order(sign(plot.df$R)*(-log10(plot.df$padj)),decreasing = T), ] 
+    
+    pos <- plot.df %>% 
+      filter(padj<0.05 & R>0.2)
+    if(nrow(pos)>20){
+      pos <- head(pos,20)
+    } else{
+      pos <- pos
+    }
+      
+    neg <- plot.df %>% 
+      filter(padj<0.05 & R<0.2)
+    if(nrow(neg)>20){
+      neg <- tail(neg,20)
+    } else{
+      neg <- neg
+    }
+    
+    # format dataframe to plot
+    plot.df <- plot.df %>%
+      mutate(sig.trait= ifelse(padj<0.05 & R>0, "positive", 
+                             ifelse(padj<0.05 & R<0,"negative","ns")),
+             CoV.log.color = ifelse(sig.trait=="positive", log10(!!rlang::sym(CoV)),
+                                     ifelse(sig.trait=="negative",
+                                            -log10(!!rlang::sym(CoV)),NA)),
+             label = ifelse(sig.trait!="ns" &  !!rlang::sym(Gene.column) %in% c(pos[[Gene.column]], neg[[Gene.column]]), 
+                    !!rlang::sym(Gene.column), "")) 
+    ## The !! (double-bang) is used for unquoting or splicing within quasiquotation. It tells R to evaluate the expression inside the quosure and insert its value into the surrounding expression.
+    ## rlang::sym() is a function from the rlang package that is used to convert a character string into a symbol (or name). Symbols are a type of R object that represents a name or an expression.
+    
+    plot.df$sig.trait <- factor(plot.df$sig.trait, levels = c("positive","negative","ns"))
+    
+    
+    if (nrow(pos)+nrow(neg)==0) {
+      cat("No significant gene. Skipping interation ",i, " - ", trait.names[i], "\n")
+      next  # Skip to the next iteration
+    }
+
+    # plot volcano
+
+    ggplot(data=plot.df, 
+           aes(x=R, y=-log10(padj), 
+               col= CoV.log.color,
+               label=label)
+           ) +
+      
+      ylab(expression(-log[10]~(adj.~P~value))) +
+      xlab(expression("R")) +
+       
+      geom_point(aes(size= !!rlang::sym(abundance)) )+
+      scale_color_gradient2(high = "red3",mid = "white",low = "blue3",
+                            midpoint = 0,na.value = "grey80"
+                           #  space = "Lab",na.value = "grey50",guide = "colourbar",aesthetics = "colour"
+      )+
+      scale_size_continuous(range = c(0.1, 4))+
+      
+#     scale_color_manual(values = pal, limits = names(pal)) +
+
+      
+      geom_text_repel(
+          data=subset(plot.df,R>0), 
+          color="red",
+          size=5,
+          nudge_x = 0.02 - subset(plot.df,R>0)$R,
+          segment.size=0.3, segment.color="grey",
+          direction="y", 
+          hjust= 0,
+          max.overlaps = Inf)+
+      geom_text_repel(
+        data=subset(plot.df,R<0), 
+        color="blue",
+        size=5,
+        nudge_x = -0.02 - subset(plot.df,R<0)$R,
+        segment.size=0.3, segment.color="grey", 
+        direction="y", 
+        hjust= 1,
+        max.overlaps = Inf)+
+      
+      
+      theme_minimal() +
+      
+      labs(size=expression("Abundance (log2)"),
+           color=expression("Direction signed\nCoV (log10)"),
+           title = trait.names[i]) +  
+      
+      theme(legend.position = "right",
+            legend.title.align = 0, # left align
+            legend.title = element_text(margin = margin(t = 15, unit = "pt")) # add more space on top of legend titles
+            #legend.spacing.y = unit(1,"cm")
+            ) +
+      theme(panel.grid.minor.y = element_blank(),
+            panel.grid.minor.x = element_blank(),
+            text=element_text(size=20),
+            axis.text=element_text(size=16),
+            axis.title=element_text(size=20),
+            legend.text=element_text(size=18),
+            legend.title=element_text(size=18),
+            aspect.ratio = 1/1.2, panel.grid.major = element_blank(),
+            panel.background = element_blank(), axis.line = element_line(colour = "black")) + 
+      theme(plot.title = element_text(hjust = 0.5, face = "italic", colour="grey50", size=20))
+    
+    # save figure. Remove % in file name (because trait purity_% is not allowed in file name)
+    filename=paste0("figures/",name,"_cor_", trait.names[i],".pdf")
+    ggsave(filename=gsub("%","",filename),width=10,height=6.5,units="in")
+    
+    print(paste0("The plot is saved in figures/",name,"_cor_", trait.names[i],".pdf"))
+    
+    print(paste0("Finished iteration ", i, " - ",trait.names[i]))
+  }
+  
+}
+```
+
+
+
+```{r plot protein-trait correlation volcano plots}
+#pro.lm.results <- read.csv("output/islets_LR_traits_LOG2protein_results.csv", check.names = F)
+View(pro.lm.results)
+
+rna.trait.cor <- read.csv("output/islets_RNAseq50_LOGfuction_correlation.csv")
+View(rna.trait.cor)
+
+pro.trait.cor <- read.csv("output/islets_LOG2proteomics50_LOGfunction_correlation.csv", check.names = F)
+View(pro.trait.cor)
+
+
+
+traits.pro.cor <- read.csv("output/traits_numerical_proc_for_protein_correlation.csv", row.names=1, check.names = F)
+View(trait.names)
+
+
+# add previously calculated CoV and abundance to lm results
+pro.traits.correlation.anno <- read.table("output/islets_LOGproteomics50_LOGfuction_correlation_anno.txt",header = T)
+View(pro.traits.correlation.anno)
+
+pro.trait.cor <- pro.trait.cor %>%
+  left_join(pro.traits.correlation.anno[,c(3,4:9)], by=c("ENSG")) %>%
+  relocate(Protein.names:protein.CoV, .after = ENSG) %>%
+  mutate(log.signal = log2(mean.signal),
+         log.signal.length = log2(mean.signal.length) )
+
+View(pro.trait.cor)
+
+# format trait names
+format_trait_names <- function(df){
+  colnames(df) <- gsub("\\ ","_",colnames(df))
+  colnames(df) <- gsub("\\(","",colnames(df))
+  colnames(df) <- gsub("\\)","",colnames(df))
+  colnames(df) <- gsub("\\/",".",colnames(df))
+  return(df)
+}
+
+traits.pro.cor <- format_trait_names(traits.pro.cor)
+
+trait.names <- colnames(traits.pro.cor)
+
+
+plot.cor.volcano(trait.names, cor.results = pro.trait.cor, Gene.column = "Genes", 
+                 name = "LOG2protein", CoV = "protein.CoV", abundance = "log.signal.length")
+
+
+```
+
+```{r plot RNA-trait correlation volcano plots}
+
+rna.trait.cor <- read.csv("output/islets_RNAseq50_LOGfuction_correlation.csv", check.names = F)
+View(rna.trait.cor)
+
+traits.pro.cor <- read.csv("output/traits_numerical_proc_for_protein_correlation.csv", row.names=1, check.names = F)
+View(trait.names)
+
+
+# add previously calculated CoV and abundance to lm results
+rna.traits.correlation.anno <- read.table("output/islets_RNAseq50_LOGfuction_correlation_anno.txt",header = T)
+View(rna.traits.correlation.anno)
+
+rna.trait.cor <- rna.trait.cor %>%
+  left_join(rna.traits.correlation.anno[,c(1,7,8,10:11)], by=c("ENSG")) %>%
+  mutate(log.baseMean=log2(baseMean))%>%
+  relocate(baseMean:log.baseMean, .after = ENSG) 
+
+View(rna.trait.cor)
+
+# format trait names
+format_trait_names <- function(df){
+  colnames(df) <- gsub("\\ ","_",colnames(df))
+  colnames(df) <- gsub("\\(","",colnames(df))
+  colnames(df) <- gsub("\\)","",colnames(df))
+  colnames(df) <- gsub("\\/",".",colnames(df))
+  return(df)
+}
+
+traits.pro.cor <- format_trait_names(traits.pro.cor)
+
+trait.names <- colnames(traits.pro.cor)
+
+
+plot.cor.volcano(trait.names, cor.results = rna.trait.cor, Gene.column = "GeneName", 
+                 name = "RNA", CoV = "rna.CoV", abundance = "log.baseMean")
+
+
+```
+
+```{r plot RNA-trait correlation volcano plots, adjust labels}
+
+rna.trait.cor <- read.csv("output/islets_RNAseq50_LOGfuction_correlation.csv", check.names = F)
+View(rna.trait.cor)
+
+traits.pro.cor <- read.csv("output/traits_numerical_proc_for_protein_correlation.csv", row.names=1, check.names = F)
+View(trait.names)
+
+
+# add previously calculated CoV and abundance to lm results
+rna.traits.correlation.anno <- read.table("output/islets_RNAseq50_LOGfuction_correlation_anno.txt",header = T)
+View(rna.traits.correlation.anno)
+
+rna.trait.cor <- rna.trait.cor %>%
+  left_join(rna.traits.correlation.anno[,c(1,7,8,10:11)], by=c("ENSG")) %>%
+  mutate(log.baseMean=log2(baseMean))%>%
+  relocate(baseMean:log.baseMean, .after = ENSG) 
+
+View(rna.trait.cor)
+
+# format trait names
+format_trait_names <- function(df){
+  colnames(df) <- gsub("\\ ","_",colnames(df))
+  colnames(df) <- gsub("\\(","",colnames(df))
+  colnames(df) <- gsub("\\)","",colnames(df))
+  colnames(df) <- gsub("\\/",".",colnames(df))
+  return(df)
+}
+
+traits.pro.cor <- format_trait_names(traits.pro.cor)
+
+trait.names <- colnames(traits.pro.cor)
+
+# some plots have crowded labels. Increase ylim for the plots
+trait.names <- trait.names[c(3,26)]
+
+plot.cor.volcano.ylim <- function(trait.names, cor.results, Gene.column, name, CoV, abundance, x, y ){
+  library(tidyverse)
+  library(ggrepel) # for label text in ggplot2
+  
+  # if gene name is missing, use the gene ID
+  cor.results <- cor.results %>%
+    mutate(Gene.column=coalesce(!!rlang::sym(Gene.column), ENSG))
+  
+  for (i in 1:length(trait.names)){
+    
+    # subset the data for one trait 
+    selected.col <- c( 1:(grep("R_", names(cor.results))[1]-1), grep(trait.names[i], names(cor.results)) )
+    plot.df <- cor.results[,selected.col]
+    
+    # format data
+    colnames(plot.df) <- gsub(paste0("_",trait.names[i]),"", colnames(plot.df))
+    
+    # select top or neg 20 genes to label
+    plot.df <- plot.df[order(sign(plot.df$R)*(-log10(plot.df$padj)),decreasing = T), ] 
+    
+    pos <- plot.df %>% 
+      filter(padj<0.05 & R>0.2)
+    if(nrow(pos)>20){
+      pos <- head(pos,20)
+    } else{
+      pos <- pos
+    }
+      
+    neg <- plot.df %>% 
+      filter(padj<0.05 & R<0.2)
+    if(nrow(neg)>20){
+      neg <- tail(neg,20)
+    } else{
+      neg <- neg
+    }
+    
+    # format dataframe to plot
+    plot.df <- plot.df %>%
+      mutate(sig.trait= ifelse(padj<0.05 & R>0, "positive", 
+                             ifelse(padj<0.05 & R<0,"negative","ns")),
+             CoV.log.color = ifelse(sig.trait=="positive", log10(!!rlang::sym(CoV)),
+                                     ifelse(sig.trait=="negative",
+                                            -log10(!!rlang::sym(CoV)),NA)),
+             label = ifelse(sig.trait!="ns" &  !!rlang::sym(Gene.column) %in% c(pos[[Gene.column]], neg[[Gene.column]]), 
+                    !!rlang::sym(Gene.column), "")) 
+    ## The !! (double-bang) is used for unquoting or splicing within quasiquotation. It tells R to evaluate the expression inside the quosure and insert its value into the surrounding expression.
+    ## rlang::sym() is a function from the rlang package that is used to convert a character string into a symbol (or name). Symbols are a type of R object that represents a name or an expression.
+    
+    plot.df$sig.trait <- factor(plot.df$sig.trait, levels = c("positive","negative","ns"))
+    
+    
+    if (nrow(pos)+nrow(neg)==0) {
+      cat("No significant gene. Skipping interation ",i, " - ", trait.names[i], "\n")
+      next  # Skip to the next iteration
+    }
+
+    # plot volcano
+
+    ggplot(data=plot.df, 
+           aes(x=R, y=-log10(padj), 
+               col= CoV.log.color,
+               label=label)
+           ) +
+      
+      ylim(c(x,y)) +
+      
+      ylab(expression(-log[10]~(adj.~P~value))) +
+      xlab(expression("R")) +
+       
+      geom_point(aes(size= !!rlang::sym(abundance)) )+
+      scale_color_gradient2(high = "red3",mid = "white",low = "blue3",
+                            midpoint = 0,na.value = "grey80"
+                           #  space = "Lab",na.value = "grey50",guide = "colourbar",aesthetics = "colour"
+      )+
+      scale_size_continuous(range = c(0.1, 4))+
+      
+#     scale_color_manual(values = pal, limits = names(pal)) +
+
+      
+      geom_text_repel(
+          data=subset(plot.df,R>0), 
+          color="red",
+          size=5,
+          nudge_x = 0.02 - subset(plot.df,R>0)$R,
+          segment.size=0.3, segment.color="grey",
+          direction="y", 
+          hjust= 0,
+          max.overlaps = Inf)+
+      geom_text_repel(
+        data=subset(plot.df,R<0), 
+        color="blue",
+        size=5,
+        nudge_x = -0.02 - subset(plot.df,R<0)$R,
+        segment.size=0.3, segment.color="grey", 
+        direction="y", 
+        hjust= 1,
+        max.overlaps = Inf)+
+      
+      
+      theme_minimal() +
+      
+      labs(size=expression("Abundance (log2)"),
+           color=expression("Direction signed\nCoV (log10)"),
+           title = trait.names[i]) +  
+      
+      theme(legend.position = "right",
+            legend.title.align = 0, # left align
+            legend.title = element_text(margin = margin(t = 15, unit = "pt")) # add more space on top of legend titles
+            #legend.spacing.y = unit(1,"cm")
+            ) +
+      theme(panel.grid.minor.y = element_blank(),
+            panel.grid.minor.x = element_blank(),
+            text=element_text(size=20),
+            axis.text=element_text(size=16),
+            axis.title=element_text(size=20),
+            legend.text=element_text(size=18),
+            legend.title=element_text(size=18),
+            aspect.ratio = 1/1.2, panel.grid.major = element_blank(),
+            panel.background = element_blank(), axis.line = element_line(colour = "black")) + 
+      theme(plot.title = element_text(hjust = 0.5, face = "italic", colour="grey50", size=20))
+    
+    # save figure. Remove % in file name (because trait purity_% is not allowed in file name)
+    filename=paste0("figures/",name,"_cor_", trait.names[i],".pdf")
+    ggsave(filename=gsub("%","",filename),width=10,height=6.5,units="in")
+    
+    print(paste0("The plot is saved in figures/",name,"_cor_", trait.names[i],".pdf"))
+    
+    print(paste0("Finished iteration ", i, " - ",trait.names[i]))
+  }
+  
+}
+
+plot.cor.volcano.ylim(trait.names, cor.results = rna.trait.cor, Gene.column = "GeneName", 
+                 name = "RNA", CoV = "rna.CoV", abundance = "log.baseMean", x = 0, y = 2.4)
+
+
+
+```
+
+```{r plot protein-trait lm volcano plots}
+pro.lm.results <- read.csv("output/islets_LR_traits_LOG2protein_results.csv", check.names = F)
+View(pro.lm.results)
+
+traits.pro.cor <- read.csv("output/traits_numerical_proc_for_protein_correlation.csv", row.names=1, check.names = F)
+View(trait.names)
+
+
+# add previously calculated CoV and abundance to lm results
+pro.traits.correlation.anno <- read.table("output/islets_LOGproteomics50_LOGfuction_correlation_anno.txt",header = T)
+View(pro.traits.correlation.anno)
+
+pro.lm.results <- pro.lm.results %>%
+  left_join(pro.traits.correlation.anno[,c(1,4:9)], by=c("ID"="Protein.Ids")) %>%
+  relocate(Protein.names:protein.CoV, .after = ENSG) %>%
+  mutate(log.signal = log2(mean.signal),
+         log.signal.length = log2(mean.signal.length) )
+
+View(pro.lm.results)
+
+# format trait names
+format_trait_names <- function(df){
+  colnames(df) <- gsub("\\ ","_",colnames(df))
+  colnames(df) <- gsub("\\(","",colnames(df))
+  colnames(df) <- gsub("\\)","",colnames(df))
+  colnames(df) <- gsub("\\/",".",colnames(df))
+  return(df)
+}
+traits.pro.cor <- format_trait_names(traits.pro.cor)
+
+trait.names <- colnames(traits.pro.cor)
+
+
+plot.lm.volcano(trait.names, pro.lm.results, "Genes", "LOG2protein", "protein.CoV", "log.signal.length", pos.hjust = 0.5, neg.hjust = 0.5)
+
+sig.number.pro <- sig.number.list
+print(sig.number.pro)
+
+
+# adjust height of fatty acid AUC plot to avoid label overlap -------------
+trait.names <- trait.names[21]
+plot.lm.volcano.ylim(trait.names, pro.lm.results, "Genes", "LOG2protein", "protein.CoV", "log.signal.length", pos.hjust = 0.5, neg.hjust = 0.5, ylim = 7)
+
+plot.lm.volcano.ylim <- function(trait.names, lm.results, Gene.column, name, CoV, abundance, pos.hjust, neg.hjust, ylim ){
+  library(tidyverse)
+  library(ggrepel) # for label text in ggplot2
+  
+  # if gene name is missing, use the gene ID
+  lm.results <- lm.results %>%
+    mutate(Gene.column=coalesce(!!rlang::sym(Gene.column),ID))
+  
+  # Create an empty list to store sig gene numbers
+  sig.number.list <- list()
+  
+  for (i in 1:length(trait.names)){
+    
+    # subset the data for one trait 
+    selected.col <- c( 1:(grep("coeff", names(lm.results))[1]-1), grep(trait.names[i], names(lm.results)) )
+    plot.df <- lm.results[,selected.col]
+    
+    # format data
+    colnames(plot.df) <- gsub(paste0("_",trait.names[i]),"", colnames(plot.df))
+    
+    # select top or neg 20 genes to label
+    plot.df <- plot.df[order(sign(plot.df$coeff)*(-log10(plot.df$padj)),decreasing = T), ] 
+    
+    pos <- plot.df %>% 
+      filter(padj<0.05 & coeff>0)
+    if(nrow(pos)>20){
+      pos <- head(pos,20)
+    } else{
+      pos <- pos
+    }
+      
+    neg <- plot.df %>% 
+      filter(padj<0.05 & coeff<0)
+    if(nrow(neg)>20){
+      neg <- tail(neg,20)
+    } else{
+      neg <- neg
+    }
+    
+    # format dataframe to plot
+    plot.df <- plot.df %>%
+      mutate(sig.trait= ifelse(padj<0.05 & coeff>0, "positive", 
+                             ifelse(padj<0.05 & coeff<0,"negative","ns")),
+             CoV.log.color = ifelse(sig.trait=="positive", log10(!!rlang::sym(CoV)),
+                                     ifelse(sig.trait=="negative",
+                                            -log10(!!rlang::sym(CoV)),NA)),
+             label = ifelse(sig.trait!="ns" &  !!rlang::sym(Gene.column) %in% c(pos[[Gene.column]], neg[[Gene.column]]), 
+                    !!rlang::sym(Gene.column), "")) 
+    ## The !! (double-bang) is used for unquoting or splicing within quasiquotation. It tells R to evaluate the expression inside the quosure and insert its value into the surrounding expression.
+    ## rlang::sym() is a function from the rlang package that is used to convert a character string into a symbol (or name). Symbols are a type of R object that represents a name or an expression.
+    
+    plot.df$sig.trait <- factor(plot.df$sig.trait, levels = c("positive","negative","ns"))
+    
+    # save the number of sig genes
+    plot.df <- plot.df %>%
+      mutate(sig.model= case_when(
+        padj<0.05 & padj.T2D<0.05 & padj.model<0.05 ~ "trait.T2D.model",
+        padj<0.05 & padj.T2D<0.05 & padj.model>=0.05 ~ "trait.T2D",
+        padj<0.05 & padj.T2D>=0.05 & padj.model<0.05 ~ "trait.model",
+        padj<0.05 & padj.T2D>=0.05 & padj.model>=0.05 ~ "trait_alone",
+        padj>=0.05 & padj.T2D<0.05 & padj.model<0.05 ~ "T2D.model",
+        padj>=0.05 & padj.T2D<0.05 & padj.model>=0.05 ~ "T2D_alone",
+        padj>=0.05 & padj.T2D>=0.05 & padj.model<0.05 ~ "model_alone",
+        padj>=0.05 & padj.T2D>=0.05 & padj.model>=0.05 ~ "ns",
+      ))
+    
+    sig.model.dat <- as.data.frame(table(plot.df$sig.model))
+
+    sig.number.list[[trait.names[i]]] <- sig.model.dat
+    
+    if (nrow(pos)+nrow(neg)==0) {
+      cat("No significant gene. Skipping interation ",i, " - ", trait.names[i], "\n")
+      next  # Skip to the next iteration
+    }
+
+    # plot volcano
+
+    ggplot(data=plot.df, 
+           aes(x=coeff, y=-log10(padj), 
+               col= CoV.log.color,
+               label=label)
+           ) +
+      
+      ylab(expression(-log[10]~(adj.~P~value))) +
+      xlab(expression("Coefficient")) +
+       
+      geom_point(aes(size= !!rlang::sym(abundance)) )+
+      scale_color_gradient2(high = "red3",mid = "white",low = "blue3",
+                            midpoint = 0,na.value = "grey80"
+                           #  space = "Lab",na.value = "grey50",guide = "colourbar",aesthetics = "colour"
+      )+
+      scale_size_continuous(range = c(0.1, 4))+
+      
+      ylim(c(0,ylim)) +
+#     scale_color_manual(values = pal, limits = names(pal)) +
+      
+      geom_text_repel(
+        data=subset(plot.df,coeff>0), 
+        color="red",
+        size=5,
+        nudge_x = max(plot.df$coeff)*1.5 - subset(plot.df,coeff>0)$coeff,
+        segment.size=0.3, segment.color="grey", 
+        direction="y", 
+        hjust= pos.hjust, # adjusting this somehow reduced overlap
+        #max.iter = 100000,
+        max.overlaps = Inf)+
+      
+      geom_text_repel(
+        data=subset(plot.df,coeff<0), 
+        color="blue",
+        size=5,
+        nudge_x = min(plot.df$coeff)*1.5 - subset(plot.df,coeff<0)$coeff,
+        segment.size=0.3, segment.color="grey", 
+        direction="y", 
+        hjust = neg.hjust,
+        max.overlaps = Inf)+
+      
+      theme_minimal() +
+      
+      labs(size=expression("Abundance (log2)"),
+           color=expression("Direction signed\nCoV (log10)"),
+           title = trait.names[i]) +  
+      
+      theme(legend.position = "right",
+            legend.title.align = 0, # left align
+            legend.title = element_text(margin = margin(t = 15, unit = "pt")) # add more space on top of legend titles
+            #legend.spacing.y = unit(1,"cm")
+            ) +
+      theme(panel.grid.minor.y = element_blank(),
+            panel.grid.minor.x = element_blank(),
+            text=element_text(size=20),
+            axis.text=element_text(size=16),
+            axis.title=element_text(size=20),
+            legend.text=element_text(size=18),
+            legend.title=element_text(size=18),
+            aspect.ratio = 1/1.2, panel.grid.major = element_blank(),
+            panel.background = element_blank(), axis.line = element_line(colour = "black")) + 
+      theme(plot.title = element_text(hjust = 0.5, face = "italic", colour="grey50", size=20))
+    
+    # save figure. Remove % in file name (because trait purity_% is not allowed in file name)
+    filename=paste0("figures/",name,"_lm_", trait.names[i],".pdf")
+    ggsave(filename=gsub("%","",filename),width=10,height=6.5,units="in")
+    
+    print(paste0("The plot is saved in figures/",name,"_lm_", trait.names[i],".pdf"))
+    
+    print(paste0("Finished iteration ", i, " - ",trait.names[i]))
+  }
+#  cat(capture.output(print(sig.number.list), file=paste0("output/", name, "_lm_trait_T2D_model_sig_number.txt")))
+#  print(paste0("The number of ", name, " with significant trait, T2D or model is saved in output/", name, "_lm_trait_T2D_model_sig_number.txt" ))
+#  sig.number.list <<- sig.number.list
+}
+```
+
+
+```{r plot RNA-trait lm volcano plots}
+
+#rna.lm.results <- read.csv("output/islets_LR_traits_RNA_results.csv", check.names = F)
+
+rna.lm.results <- read.csv("output/islets_LR_traits_RNA_batch_adjusted_results.csv", check.names = F)
+View(rna.lm.results)
+
+traits.rna.cor <- read.csv("output/traits_numerical_proc_for_RNA_correlation.csv", check.names = F, row.names = 1)
+View(traits.rna.cor)
+
+
+# add previously calculated CoV and abundance to lm results
+rna.traits.correlation.anno <- read.table("output/islets_RNAseq50_LOGfuction_correlation_anno.txt",header = T)
+View(rna.traits.correlation.anno)
+
+rna.lm.results <- rna.lm.results %>%
+  left_join(rna.traits.correlation.anno[,c(1,7,8,10:12)], by=c("ID"="ENSG")) %>%
+  mutate(log.baseMean=log2(baseMean))%>%
+  relocate(baseMean:log.baseMean, .after = ID) 
+
+
+traits.rna.cor <- format_trait_names(traits.rna.cor)
+
+trait.names <- colnames(traits.rna.cor)
+
+colnames(rna.lm.results)
+
+#plot.lm.volcano(trait.names, rna.lm.results, "GeneName", "RNA", "rna.CoV", "log.baseMean")
+
+plot.lm.volcano(trait.names, rna.lm.results, "GeneName", "RNA_batch", "rna.CoV", "log.baseMean", pos.hjust = 0.8, neg.hjust = 0.1)
+
+sig.number.rna <- sig.number.list
+print(sig.number.rna)
+
+
+```
+
+
+```{r function scater plot}
+rna.lm.results <- read.csv("output/islets_LR_traits_RNA_results.csv", check.names = F)
+View(rna.lm.results)
+
+
+traits.rna <- read.csv("output/traits_proc_for_RNA_correlation.csv", check.names = F)
+View(traits.rna)
+
+traits.rna.cor <- read.csv("output/traits_numerical_proc_for_RNA_correlation.csv", check.names = F, row.names = 1)
+View(traits.rna.cor)
+
+rna.cor.order <- read.csv("output/RNA_proc_for_traits_correlation.csv", row.names=1)
+View(rna.cor.order)
+
+
+traits.rna.cor <- format_trait_names(traits.rna.cor)
+colnames(traits.rna.cor) <- gsub("_%","", colnames(traits.rna.cor)) # In Purity_%, % caused problems. Removed it.
+trait.names <- colnames(traits.rna.cor)
+
+colnames(rna.lm.results) <- gsub("_%","", colnames(rna.lm.results))
+
+
+plot.lm.scatter(trait.names, lm.results = rna.lm.results, Gene.column="external_gene_name", gene.df = rna.cor.order, trait.df = traits.rna.cor, plot.covar = F, trait.covar = traits.rna[c("Sex", "diabetes", "batch")], shape = "diabetes", color = "batch", gene.number.select.from = 1:20, gene.number= 20, name = "RNA")
+
+plot.lm.scatter(trait.names, lm.results = rna.lm.results, Gene.column="external_gene_name", gene.df = rna.cor.order, trait.df = traits.rna.cor, plot.covar = T, trait.covar = traits.rna[c("Sex", "diabetes", "batch")], shape = "diabetes", color = "batch", gene.number.select.from = 1:20, gene.number= 20, name = "RNA_T2D_batch")
+
+plot.lm.scatter(trait.names, lm.results = rna.lm.results, Gene.column="external_gene_name", gene.df = rna.cor.order, trait.df = traits.rna.cor, plot.covar = T, trait.covar = traits.rna[c("Sex", "diabetes", "batch")], shape = "Sex", color = "batch", gene.number.select.from = 1:20, gene.number= 20, name = "RNA_sex_batch")
+
+
+lm.results <- rna.lm.results
+Gene.column <- "external_gene_name"
+
+i=1
+gene.number.select.from <- 1:20
+gene.number <- 20
+trait.names[i]
+gene.df <- rna.cor.order
+trait.df <- traits.rna.cor
+
+trait.covar <- traits.rna[c("Sex", "diabetes", "batch")]
+View(trait.covar)
+View(gene.df)
+View(trait.df)
+
+View(scatter.df)
+
+
+plot.lm.scatter <- function(trait.names, lm.results, Gene.column, gene.df, trait.df, plot.covar, trait.covar, shape, color, gene.number.select.from, gene.number,name){
+  library(tidyverse)
+  #library(ggrepel) # for label text in ggplot2
+  library(ggpubr) # stat_cor function to label R and p value in ggplot
+  library(gridExtra) # for grid.arrange()
+  
+  # if gene name is missing, use the gene ID
+  lm.results <- lm.results %>% 
+    mutate( !!rlang::sym(Gene.column) 
+            := ifelse(is.na(!!rlang::sym(Gene.column)) | !!rlang::sym(Gene.column) == "", ID, !!rlang::sym(Gene.column)) )#coalesce(!!rlang::sym(Gene.column), ID))
+  
+  for (i in 1:length(trait.names)){
+    
+    # subset the data for one trait 
+    selected.col <- c( 1:(grep("coeff", names(lm.results))[1]-1), grep(trait.names[i], names(lm.results)) )
+    plot.df <- lm.results[,selected.col]
+    
+    # format data
+    colnames(plot.df) <- gsub(paste0("_",trait.names[i]),"", colnames(plot.df))
+    
+    # select top or neg 20 genes to label
+    plot.df <- plot.df[order(sign(plot.df$coeff)*(-log10(plot.df$pvalue)),decreasing = T), ] 
+    
+    select.gene.index <- sample(x = gene.number.select.from, size = gene.number)
+    
+    pos <- plot.df[select.gene.index[order(select.gene.index)],]
+    neg <- plot.df[(nrow(plot.df)+1-select.gene.index[order(select.gene.index)]), ]
+    
+    stat.df <- rbind(pos,neg) # this data frame has the stats results of lm
+    
+    scatter.df <- cbind(trait.df[trait.names[i]], trait.covar, gene.df[c(pos$ID,neg$ID)])
+    
+    colnames(scatter.df) <- c(trait.names[i], colnames(trait.covar), pos[[Gene.column]], neg[[Gene.column]])
+    
+    colnames(scatter.df) <- gsub("-", "_", colnames(scatter.df)) # some gene names containing "-" causes problems in plotting. 
+    
+    plot.list <- list()
+
+    for (j in (2+ncol(trait.covar)):ncol(scatter.df)) {
+      plot <- ggplot(scatter.df, aes_string(x = names(scatter.df)[1], y = names(scatter.df)[j])) + {
+        
+        # if plot.covar is true, set shape and color for covariants
+        if (plot.covar) {geom_point(size=2, alpha= 1, aes( shape = !!rlang::sym(shape), color = !!rlang::sym(color)))
+          } else {geom_point(size=2, alpha= 1)} 
+        } +
+          
+       # stat_cor(method = "pearson") + # label.x = 3, label.y
+ #       labs(# title = paste("Scatter Plot:", names(data)[1], "vs", names(data)[i]),
+#          x = names(data)[1],
+#          y = names(data)[i]) +
+        theme_classic() +
+        theme(
+          axis.title.y = element_text(colour = "black",size=14),
+          axis.title.x = element_text(colour = "black",size=14),
+          axis.text.y = element_text(colour = "black",size=12),
+          axis.text.x = element_text(colour = "black",size=12),
+          #axis.ticks.x = element_blank(),
+          #legend.title = element_blank(),
+          legend.position="right",
+          legend.title=element_text(size=14), 
+          legend.text=element_text(size=14),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          aspect.ratio=1/1) +
+        labs(#color = "Correlation" ,
+             title = paste0("Adjusted p value = ", 
+                            format(stat.df[j-ncol(trait.covar)-1, "padj"], 
+                                   scientific = T,
+                                   digits=3) ) ) + #expression(atop("Differentially",paste("expressed")))
+        theme(axis.line = element_line()) +
+        guides(colour = guide_legend(override.aes = list(size=2,alpha=1))) 
+ 
+#      ggsave(filename=paste("figures/","name", names(scatter.df)[1],
+#                            names(scatter.df)[j],".pdf", sep="_"), 
+#             width=5, height=5, units="in")
+      plot.list[[length(plot.list) + 1]] <- plot
+      
+      cat(paste0("End of iteration ", i, "_", j-ncol(trait.covar)-1, "\n"))
+    }
+    if (plot.covar) {
+      pdf(paste0("figures/",name, "_", names(scatter.df)[1],".pdf"),
+        width = 4*5.5, height = gene.number*2/4*3.5)
+    } else{
+      pdf(paste0("figures/",name, "_", names(scatter.df)[1],".pdf"),
+        width = 4*3.5, height = gene.number*2/4*3.5)
+    }
+    
+    do.call(grid.arrange, c(plot.list, ncol = 4))
+    dev.off()
+  }
+}
+  
+
+```
+
+
+```{r secretion proteins heatmap }
+# Venn diagram for common proteins correlated with secretion function ===========================
+s.col <- c("Glucose_15G_AUC","Glucose_6G_AUC","Leucine_AUC","Fatty.acid_AUC","mean.KCl")
+
+pro.lm.results <- read.csv("output/islets_LR_traits_protein_results.csv", check.names = F)
+View(pro.lm.results)
+colnames(pro.lm.results)
+pro.secret <- pro.lm.results[c(1:9, grep("coeff_|padj_", colnames(pro.lm.results)))]
+pro.secret <- pro.secret[c(1:9, grep( paste( paste0("_", s.col), collapse = "|"), colnames(pro.secret)))]
+View(pro.secret)
+
+pos.list <- list()
+neg.list <- list()
+
+for (i in 1:length(s.col)) {
+  df.pos <- pro.secret[c(1, grep(s.col[i], colnames(pro.secret)) )] %>% 
+    filter( !!rlang::sym( paste0( "padj_", s.col[i] ) ) < 0.05 & !!rlang::sym( paste0( "coeff_", s.col[i] ) ) > 0 ) %>%
+    mutate( !!rlang::sym( paste0( "signed.log.p_", s.col[i] ) ) := sign( !!rlang::sym( paste0( "coeff_", s.col[i] ) ) )*(-log10( !!rlang::sym( paste0( "padj_", s.col[i] ) ) )))  %>%
+    mutate(!!rlang::sym( paste0( "set_", s.col[i] ) ) := '1') 
+  
+  df.neg <- pro.secret[c(1, grep(s.col[i], colnames(pro.secret)) )] %>% 
+    filter( !!rlang::sym( paste0( "padj_", s.col[i] ) ) < 0.05 & !!rlang::sym( paste0( "coeff_", s.col[i] ) ) < 0 ) %>%
+    mutate( !!rlang::sym( paste0( "signed.log.p_", s.col[i] ) ) := sign( !!rlang::sym( paste0( "coeff_", s.col[i] ) ) )*(-log10( !!rlang::sym( paste0( "padj_", s.col[i] ) ) )))  %>%
+    mutate( !!rlang::sym( paste0( "set_", s.col[i] ) ) := '1')
+  
+  pos.list[[i]] <- df.pos
+  neg.list[[i]] <- df.neg
+}
+
+View(pos.list)
+View(neg.list)
+
+order_coeff <- function(df, pro.list){
+  df <- Reduce(function(dtf1, dtf2) merge(dtf1, dtf2, by = "ID", all = TRUE),
+        pro.list) 
+  
+  df$intersect.num <- rowSums(!is.na(df[ , grep("set_", colnames(df))]))
+  df$sum.coeff <- abs( rowSums( df[ , grep("coeff_", colnames(df))], na.rm = T) )
+  df$mean.coeff <- abs( rowMeans( df[ , grep("coeff_", colnames(df))], na.rm = T) )
+  df <- df[order(-df$intersect.num, -df$mean.coeff),]
+  df <- df %>% left_join(pro.lm.results[1:2]) %>%
+    relocate(Genes, .after = "ID")
+  return(df)
+}
+
+
+# not used, not finished
+order_p <- function(df, pro.list){
+  df <- Reduce(function(dtf1, dtf2) merge(dtf1, dtf2, by = "ID", all = TRUE),
+        pro.list) 
+  
+  df$signed_p <- 
+  df$intersect.num <- rowSums(!is.na(df[ , grep("set_", colnames(df))]))
+  df$sum.logP <- abs( rowSums( df[ , grep("signed.log.p_", colnames(df))], na.rm = T) )
+  df$mean.logP <- abs( rowMeans( df[ , grep("signed.log.p_", colnames(df))], na.rm = T) )
+  df <- df[order(-df$intersect.num, -df$mean.coeff),]
+  df <- df %>% left_join(pro.lm.results[1:2]) %>%
+    relocate(Genes, .after = "ID")
+  return(df)
+}
+
+pos.df <- order_coeff(pos.df, pos.list)
+neg.df <- order_coeff(neg.df, neg.list)
+View(neg.df)
+summary(pos.df[1:50, grep("coeff_", colnames(pos.df))]) 
+summary(neg.df[1:50, grep("coeff_", colnames(neg.df))]) 
+## heatmaps for secretion correlated postive or negative proteins -------------------
+
+
+#m <- as.matrix(as.data.frame(lapply(m.anno, as.numeric),check.names=F))
+View(m)
+max(na.omit(m))
+min(na.omit(m))
+#m.z <- t(scale(t(m))) #%>% as.data.frame()
+min(na.omit(neg.df[ , grep("coeff_", colnames(neg.df))]))
+
+plot.heatmap(df = pos.df, name = "positive")
+plot.heatmap(df = neg.df, name = "negative")
+
+# function to plot heatmap
+plot.heatmap <- function(df, name) {
+  library(ComplexHeatmap)
+  library(circlize) 
+  library(gridtext)
+  library(scales)
+  m <- df[ 1:50, grep("coeff_", colnames(df)) ]
+  colnames(m) <- gsub("coeff_|mean.|_AUC","", colnames(m))
+  colnames(m) <- gsub("\\_|\\."," ", colnames(m))
+  m <- m[ , c("Glucose 6G", "Glucose 15G", "Leucine", "Fatty acid", "KCl")]
+  heatmap <- Heatmap(m, #matrix_Z_score_total,
+                   name = "Coeff",
+                   na_col = "white",
+                   show_row_names = TRUE,
+                   show_column_names = TRUE,
+                   show_row_dend = FALSE,
+                   row_labels = gt_render(
+                     
+ #### change the gene labels for positive or negative proteins !!!!                   
+                     #sets.pos.ord1[1:50,]$Genes
+                     df[1:50,]$Genes
+                   
+                     ),
+                   row_names_gp = gpar(fontsize = 10),
+                   column_names_side = "top",
+                   row_dend_side = "left",
+                   column_dend_side = "bottom",
+                   #     layer_fun = function(j, i, x, y, width, height, fill) {
+                   #       mat = restore_matrix(j, i, x, y)
+                   #      ind = unique(c(mat[, c(end_index_CW, 
+                   #                              end_index_CS, 
+                   #                              end_index_KW, 
+                   #                              end_index_KS)]))
+                   #       grid.rect(x = x[ind] + unit(0.5/ncol(m.z), "npc"), 
+                   #                 y = y[ind], 
+                   #                 width = unit(0.03, "inches"), 
+                   #                 height = unit(1/nrow(m.z), "npc"),
+                   #                 gp = gpar(col = "white")
+                   #       )
+                   #     },
+                   col = colorRamp2(#c(-0.5,-0.3,0,0.3,0.5), 
+                                   c(-0.45,-0.1,0,0.1,0.65), 
+                                    c("blue4","skyblue", "white","darksalmon", "red4")
+                                    ),
+                   #   top_annotation = columnAnnotation(empty = anno_empty(border = FALSE
+                   #                                                        , height = unit(6, "mm")
+                   #   )),
+                   
+                   column_order = 1:ncol(m),
+                   row_order = 1:nrow(m),
+                   height = unit(180, "mm"), 
+                   
+                   width = ncol(m)*unit(6, "mm"),
+                   border_gp = gpar(col = "black"),
+                   show_heatmap_legend = TRUE,
+                   heatmap_legend_param = list(
+                     title = "Coefficient",
+                     at=c(-0.5,-0.3,-0.1,0.1,0.3,0.6),
+                     title_position = "topleft",
+                     legend_height = unit(4, "cm")))
+
+draw(heatmap)
+#
+
+pdf(file = paste0("figures/heatmap_", name, "_secretion_coeff_protein_top50.pdf"),
+    width = 3, 
+    height = 9, 
+    #units = "in", res = 600
+)
+
+draw(heatmap)
+dev.off()
+
+}
+
+
+```
+
+```{r secretion proteins venn}
+# https://rdrr.io/cran/venn/man/venn.html
+
+#install.packages("venn")
+install.packages("ggpolypath")
+
+df <- pos.df
+name <- "positive"
+plot_venn(df = pos.df, name = "positive")
+plot_venn(df = neg.df, name = "negative")
+
+plot_venn <- function(df, name){
+  library(venn) # for bubbly venn
+  library(ggpolypath) # for formating bubbly venn plot
+
+  # https://rdrr.io/cran/venn/man/venn.html
+  
+warmcol <- c("#FF5733", #(a deep orange-red)
+           "#B22222", #"firebrick",
+           #"#FFA07A", #(a light salmon pink)
+           #"#FFDAB9", #(a peachy beige)
+           "#FFC0CB", #"pink"
+           "#FFC300", #(a bright yellow-orange)
+           "#FF8C00") #(a bright orange)
+
+coldcol <- c(#"turquoise2",
+             #"#66CDAA", #"aquamarine3"
+             #"#7FFFD4",#"aquamarine",
+             #"#00BFFF",#"medium blue",
+             #"#4169E1",#"royal blue",
+             "#4682B4",#, "steelblue",
+             "#6A5ACD",# "slateblue,
+             #"#7FFFD4",#"light turquoise",
+             "#B0E0E6",# "powderblue",
+             #"#00FFFF",#"bright cyan", 
+             #"#E0FFFF", #"pale blue-green"
+             #"#6a51a3", #medianpurple4
+             "#5F9EA0", #"cadetblue"
+             "skyblue2"
+             )
+
+  sets <- df[, grep("set_", colnames(df))]
+  colnames(sets) <- gsub("set_|mean.|_AUC","", colnames(sets))
+  colnames(sets) <- gsub("\\_|\\."," ", colnames(sets))
+  sets <- sets[ , c("Glucose 6G", "Glucose 15G", "Leucine", "Fatty acid", "KCl")]
+  sets[is.na(sets)] <- 0
+  
+  sets <- sets %>% mutate_at(1:5, as.integer) # need to be integer!
+  
+  venn(sets, ilabels = "counts")
+  
+  if (name=="positive") {
+    venn(sets, box = F, 
+         ilabels = "counts",
+         #ilab=FALSE, 
+         snames=c("Glucose 6G", "Glucose 15G", "Leucine", "Fatty acid", "KCl") ,
+         zcolor = warmcol, #"style", #mycol,
+         borders = T,
+         ilcs = 2, # control size of intersection numbers
+         sncs = NULL, # control size of group names
+         ggplot = T,size=1, color=warmcol #"tomato",
+     )
+    ggsave(filename=paste0("figures/venn_secretion_lm_protein_", name, "_color_noName.pdf"),width=10,height=10,units="in")
+    
+    venn(sets, box = F, 
+         ilabels = "counts",
+         #ilab=TRUE, 
+         snames=c("Glucose 6G", "Glucose 15G", "Leucine", "Fatty acid", "KCl") ,
+         zcolor = warmcol, #"style", #mycol,
+         borders = T,
+         ilcs = 2, # control size of intersection numbers
+         sncs = 2, # control size of group names
+         ggplot = T,size=1, color=warmcol #"tomato",
+     )
+    ggsave(filename=paste0("figures/venn_secretion_lm_protein_", name, "_color.pdf"),width=10,height=10,units="in")
+    
+  } else {
+    venn(sets, box = F, 
+         ilabels = "counts",
+         #ilab=FALSE, 
+         snames=c("Glucose 6G", "Glucose 15G", "Leucine", "Fatty acid", "KCl") ,
+         zcolor = coldcol, #"style", #mycol,
+         borders = T,
+         ilcs = 2, # control size of intersection numbers
+         sncs = NULL, # control size of group names
+         ggplot = T,size=1, color= coldcol #"tomato",
+     )
+    ggsave(filename=paste0("figures/venn_secretion_lm_protein_", name, "_color_noName.pdf"),width=10,height=10,units="in")
+    
+    venn(sets, box = F, 
+         ilabels = "counts",
+         #ilab=TRUE, 
+         snames=c("Glucose 6G", "Glucose 15G", "Leucine", "Fatty acid", "KCl") ,
+         zcolor = coldcol, #"style", #mycol,
+         borders = T,
+         ilcs = 2, # control size of intersection numbers
+         sncs = 2, # control size of group names
+         ggplot = T,size=1, color= coldcol #"tomato",
+     )
+    ggsave(filename=paste0("figures/venn_secretion_lm_protein_", name, "_color.pdf"),width=10,height=10,units="in")
+  }
+
+}
+
+x <- as.data.frame(matrix(sample(0:1, 150, replace = TRUE), ncol = 5))
+
+str(x)
+str(sets)
+sets <- sets %>% mutate_at(1:5, as.integer)
+
+colnames(sets.neg) <- gsub("mean.","", colnames(sets.neg))
+colnames(sets.neg) <- gsub("_"," ", colnames(sets.neg))
+colnames(sets.neg) <- gsub("\\."," ", colnames(sets.neg))
+venn(sets.neg[,-1], box = F, ilab=FALSE, 
+     zcolor = coldcol, #"style", #mycol,
+     borders = T,
+     ilcs = 2, # control size of intersection numbers
+     sncs = NULL, # control size of group names
+     ggplot = T,size=1,color=coldcol #"tomato",
+) 
+ggsave(filename="figures/venn_secretion_correlated_protein_negative_color_noName.png",width=10,height=10,units="in",dpi=600)
+ggsave(filename="figures/venn_secretion_correlated_protein_negative_color_noName.pdf",width=10,height=10,units="in")
+
+```

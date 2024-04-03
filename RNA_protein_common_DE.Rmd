@@ -1,0 +1,1327 @@
+---
+title: "Rank-based RNA protein comparison"
+author: "Howard Cen"
+date: "2023-11-20"
+output: html_document
+---
+
+
+```{r }
+#install.packages("tidyverse")
+library(tidyverse)
+
+library(readxl)
+
+library(ggrepel)
+
+
+library(org.Hs.eg.db)
+
+#install.packages("ggpubr")
+library(ggpubr) # stat_cor function to label R and p value in ggplot
+
+
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path)) ##Set working directory to where this file is.
+getwd()
+
+```
+
+```{r formating for RRHO2}
+
+rna <- read_excel("output/RNAseq_DESeq2_Results_islets_oneBatch.xlsx")
+
+View(rna)
+nrow(rna)
+
+pro <- read_excel("input/Proteomics Updated DE ALL (1).xls")
+nrow(pro)
+
+colnames(pro)[10:11] <- pro[1,10:11]
+colnames(pro)[4:9] <- c("mean.T2D", "mean.ND", "CV.T2D", "CV.ND", "Percent.T2D", "Percent.ND")
+pro <- pro[-1,]
+pro <- pro %>%
+  mutate_at(4:11, as.numeric) %>%
+  mutate(logFC=log2(mean.T2D/mean.ND))
+View(pro)
+
+
+common.gene <- intersect(na.omit(pro$Genes), na.omit(rna$symbol))
+length(common.gene) # 7607 genes
+length(unique(common.gene))
+
+pro.rank <- pro %>%
+  filter(Genes %in% common.gene) %>%
+  mutate(DDE= sign(logFC)*(-log10(p)) ) %>%
+  select(c(Genes,DDE)) %>%
+  as.data.frame() %>%
+  na.omit()
+View(pro.rank)  
+nrow(pro.rank) #7614
+
+dup <- pro.rank %>% group_by(Genes) %>% filter(n()>1)
+View(dup)
+
+#for duplicated gene names, kept the one with smallest p.adj (largest |DDE|)
+pro.rank <- pro.rank[order(-abs(pro.rank$DDE)),]
+pro.rank <- pro.rank[!duplicated(pro.rank$Genes),]
+nrow(pro.rank) #7606  
+
+rna.rank <- rna %>%
+  filter(symbol %in% common.gene) %>%
+  mutate(DDE=sign(log2FoldChange)*(-log10(pvalue)) ) %>%
+  select(c(symbol,DDE)) %>%
+  rename(Genes=symbol) %>%
+  as.data.frame()
+View(rna.rank)
+nrow(rna.rank) #7610
+dup <- rna.rank %>% group_by(Genes) %>% filter(n()>1)
+View(dup)
+
+#for duplicated gene names, kept the one with smallest p.adj (largest |DDE|)
+rna.rank <- rna.rank[order(-abs(rna.rank$DDE)),]
+rna.rank <- rna.rank[!duplicated(rna.rank$Genes),]
+nrow(rna.rank) #7607
+
+rna.rank <- rna.rank %>% filter(Genes != "SLC25A34") # this gene only had 1 T2D sample detected in proteomics. Omitted.
+rna.rank <- rna.rank[match(pro.rank$Genes,rna.rank$Genes),]
+
+write.csv(rna.rank, "output/RNA_for_RRHO2_unadjP.csv", row.names = F)
+write.csv(pro.rank, "output/Protein_for_RRHO2_unadjP.csv", row.names = F)
+```
+
+```{r formating for RRHO}
+
+rna <- read_excel("output/RNAseq_DESeq2_Results_islets_oneBatch.xlsx")
+View(rna)
+
+pro <- read_excel("input/Proteomics Updated DE ALL (1).xls")
+colnames(pro)[10:11] <- pro[1,10:11]
+colnames(pro)[4:9] <- c("mean.T2D", "mean.ND", "CV.T2D", "CV.ND", "Percent.T2D", "Percent.ND")
+pro <- pro[-1,]
+pro <- pro %>%
+  mutate_at(4:11, as.numeric) %>%
+  mutate(logFC=log2(mean.T2D/mean.ND))
+View(pro)
+
+# removed duplicated genes, kept most significant one.
+rna <- rna[order(-log10(rna$pvalue)),]
+rna <- rna[!duplicated(rna$symbol),]
+
+pro <- pro[order(-log10(pro$p)),]
+pro <- pro[!duplicated(pro$Genes),]
+
+# merge RNA and protein
+rna.pro <- pro %>%
+  inner_join(rna, by= c("Genes"="symbol"))
+View(rna.pro)
+
+write.csv(rna.pro, "output/RNA_Protein_FC_merge.csv",row.names = F)
+
+
+
+# (not used) RNA or protein list including all genes -----------
+rna.list <- rna %>%
+  mutate(`Metric 1`=sign(log2FoldChange)*(-log10(pvalue)) ) %>%
+  arrange(-`Metric 1`) %>%
+  mutate(`Rank 1`=1:nrow(rna)) %>%
+  select(c(ENSG, symbol, `Rank 1`, `Metric 1`)) %>%
+  rename(`Gene Name`=symbol,
+         `UniGene ID`= ENSG) 
+
+
+View(rna.list)
+
+# 
+pro.list <- pro %>%
+  mutate(`Metric 2` = sign(logFC)*(-log10(p)) ) %>%
+  arrange(-`Metric 2`) %>%
+  mutate(`Rank 2` = 1:nrow(pro) ) %>%
+  select( c(Genes, `Rank 2`, `Metric 2`) ) %>%
+  rename(`Gene Name` = Genes)
+
+View(pro.list)
+
+#
+rna.pro.list <- rna.list %>%
+  inner_join(pro.list, by= "Gene Name")
+rna.pro.list <- rna.pro.list[,c(1:3,5,4,6)]
+View(rna.pro.list)
+
+#write.table(rna.pro.list, "output/RNA_Protein_RRHO_input_unadjP.txt", sep = "\t" , quote = F, row.names = F)
+
+#write.csv(rna.list, "output/RNA_RRHO_unadjP.csv", row.names = F)
+#write.csv(pro.list, "output/Protein_RRHO_unadjP.csv", row.names = F)
+
+
+# RNA or protein list ranked in common genes ----------
+
+common.gene <- intersect(na.omit(pro$Genes), na.omit(rna$symbol))
+common.gene <- common.gene[common.gene!="SLC25A34"]
+length(common.gene)
+rna.list <- rna %>%
+  filter(symbol %in% common.gene) 
+rna.list <- rna.list %>%
+  mutate(`Metric 1`=sign(log2FoldChange)*(-log10(pvalue)) ) %>%
+  arrange(-`Metric 1`) %>%
+  mutate(`Rank 1`=1:nrow(rna.list)) %>%
+  select(c(ENSG, symbol, `Rank 1`, `Metric 1`)) %>%
+  rename(`Gene Name`=symbol,
+         `UniGene ID`= ENSG) 
+
+
+View(rna.list)
+
+# 
+pro.list <- pro %>%
+  filter(Genes %in% common.gene) 
+pro.list <- pro.list %>%
+  mutate(`Metric 2` = sign(logFC)*(-log10(p)) ) %>%
+  arrange(-`Metric 2`) %>%
+  mutate(`Rank 2` = 1:nrow(pro.list) ) %>%
+  select( c(Genes, `Rank 2`, `Metric 2`) ) %>%
+  rename(`Gene Name` = Genes)
+
+View(pro.list)
+
+#
+rna.pro.list <- rna.list %>%
+  inner_join(pro.list, by= "Gene Name")
+rna.pro.list <- rna.pro.list[,c(1:3,5,4,6)]
+View(rna.pro.list)
+
+write.table(rna.pro.list, "output/RNA_Protein_RRHO_input_unadjP.txt", sep = "\t" , quote = F, row.names = F)
+
+write.csv(rna.list, "output/RNA_RRHO_unadjP.csv", row.names = F)
+write.csv(pro.list, "output/Protein_unadjP.csv", row.names = F)
+
+# RNA or protein list ranked by logFC ----------
+
+common.gene <- intersect(na.omit(pro$Genes), na.omit(rna$symbol))
+common.gene <- common.gene[common.gene!="SLC25A34"]
+length(common.gene)
+rna.list <- rna %>%
+  filter(symbol %in% common.gene) 
+rna.list <- rna.list %>%
+  mutate(`Metric 1`= log2FoldChange ) %>%
+  arrange(-`Metric 1`) %>%
+  mutate(`Rank 1`=1:nrow(rna.list)) %>%
+  select(c(ENSG, symbol, `Rank 1`, `Metric 1`)) %>%
+  rename(`Gene Name`=symbol,
+         `UniGene ID`= ENSG) 
+
+
+View(rna.list)
+
+# 
+pro.list <- pro %>%
+  filter(Genes %in% common.gene) 
+pro.list <- pro.list %>%
+  mutate(`Metric 2` = logFC ) %>%
+  arrange(-`Metric 2`) %>%
+  mutate(`Rank 2` = 1:nrow(pro.list) ) %>%
+  select( c(Genes, `Rank 2`, `Metric 2`) ) %>%
+  rename(`Gene Name` = Genes)
+
+View(pro.list)
+
+#
+rna.pro.list <- rna.list %>%
+  inner_join(pro.list, by= "Gene Name")
+rna.pro.list <- rna.pro.list[,c(1:3,5,4,6)]
+View(rna.pro.list)
+
+write.table(rna.pro.list, "output/RNA_Protein_RRHO_input_logFC.txt", sep = "\t" , quote = F, row.names = F)
+
+write.csv(rna.list, "output/RNA_RRHO_logFC.csv", row.names = F)
+write.csv(pro.list, "output/Protein_logFC.csv", row.names = F)
+
+```
+
+
+```{r RedRibbon not used}
+
+devtools::install_github("antpiron/RedRibbon")
+library(RedRibbon)
+
+
+> devtools::install_github("antpiron/RedRibbon")
+Downloading GitHub repo antpiron/RedRibbon@HEAD
+These packages have more recent versions available.
+It is recommended to update all of them.
+Which would you like to update?
+
+ 1: All                              
+ 2: CRAN packages only               
+ 3: None                             
+ 4: rlang     (1.1.1 -> 1.1.2) [CRAN]
+ 5: lifecycle (1.0.3 -> 1.0.4) [CRAN]
+ 6: utf8      (1.2.3 -> 1.2.4) [CRAN]
+ 7: vctrs     (0.6.3 -> 0.6.4) [CRAN]
+ 8: fansi     (1.0.4 -> 1.0.5) [CRAN]
+ 9: withr     (2.5.0 -> 2.5.2) [CRAN]
+10: ggplot2   (3.4.3 -> 3.4.4) [CRAN]
+11: ggrepel   (0.9.3 -> 0.9.4) [CRAN]
+
+Enter one or more numbers, or an empty line to skip updates: a
+Enter one or more numbers, or an empty line to skip updates: 1
+rlang     (1.1.1 -> 1.1.2) [CRAN]
+lifecycle (1.0.3 -> 1.0.4) [CRAN]
+utf8      (1.2.3 -> 1.2.4) [CRAN]
+vctrs     (0.6.3 -> 0.6.4) [CRAN]
+fansi     (1.0.4 -> 1.0.5) [CRAN]
+withr     (2.5.0 -> 2.5.2) [CRAN]
+ggplot2   (3.4.3 -> 3.4.4) [CRAN]
+ggrepel   (0.9.3 -> 0.9.4) [CRAN]
+Installing 8 packages: rlang, lifecycle, utf8, vctrs, fansi, withr, ggplot2, ggrepel
+Installing packages into ‘C:/Users/jimjohnsonlab/AppData/Local/R/win-library/4.3’
+(as ‘lib’ is unspecified)
+trying URL 'https://cran.rstudio.com/bin/windows/contrib/4.3/rlang_1.1.2.zip'
+Content type 'application/zip' length 1573796 bytes (1.5 MB)
+downloaded 1.5 MB
+
+trying URL 'https://cran.rstudio.com/bin/windows/contrib/4.3/lifecycle_1.0.4.zip'
+Content type 'application/zip' length 139673 bytes (136 KB)
+downloaded 136 KB
+
+trying URL 'https://cran.rstudio.com/bin/windows/contrib/4.3/utf8_1.2.4.zip'
+Content type 'application/zip' length 149850 bytes (146 KB)
+downloaded 146 KB
+
+trying URL 'https://cran.rstudio.com/bin/windows/contrib/4.3/vctrs_0.6.4.zip'
+Content type 'application/zip' length 1334415 bytes (1.3 MB)
+downloaded 1.3 MB
+
+trying URL 'https://cran.rstudio.com/bin/windows/contrib/4.3/fansi_1.0.5.zip'
+Content type 'application/zip' length 314290 bytes (306 KB)
+downloaded 306 KB
+
+trying URL 'https://cran.rstudio.com/bin/windows/contrib/4.3/withr_2.5.2.zip'
+Content type 'application/zip' length 231760 bytes (226 KB)
+downloaded 226 KB
+
+trying URL 'https://cran.rstudio.com/bin/windows/contrib/4.3/ggplot2_3.4.4.zip'
+Content type 'application/zip' length 4298705 bytes (4.1 MB)
+downloaded 4.1 MB
+
+trying URL 'https://cran.rstudio.com/bin/windows/contrib/4.3/ggrepel_0.9.4.zip'
+Content type 'application/zip' length 607486 bytes (593 KB)
+downloaded 593 KB
+
+package ‘rlang’ successfully unpacked and MD5 sums checked
+Warning: cannot remove prior installation of package ‘rlang’
+Warning: restored ‘rlang’
+package ‘lifecycle’ successfully unpacked and MD5 sums checked
+package ‘utf8’ successfully unpacked and MD5 sums checked
+package ‘vctrs’ successfully unpacked and MD5 sums checked
+Warning: cannot remove prior installation of package ‘vctrs’
+Warning: restored ‘vctrs’
+package ‘fansi’ successfully unpacked and MD5 sums checked
+package ‘withr’ successfully unpacked and MD5 sums checked
+package ‘ggplot2’ successfully unpacked and MD5 sums checked
+package ‘ggrepel’ successfully unpacked and MD5 sums checked
+
+The downloaded binary packages are in
+	C:\Users\jimjohnsonlab\AppData\Local\Temp\RtmpKWblMZ\downloaded_packages
+── R CMD build ────────────────────────────────────────────────────────────────────────────
+✔  checking for file 'C:\Users\jimjohnsonlab\AppData\Local\Temp\RtmpKWblMZ\remotes3230775075f5\antpiron-RedRibbon-9cd3aa8/DESCRIPTION' (352ms)
+─  preparing 'RedRibbon': (4.4s)
+✔  checking DESCRIPTION meta-information ...
+─  cleaning src
+─  checking for LF line-endings in source and make files and shell scripts (644ms)
+─  checking for empty or unneeded directories (475ms)
+─  looking to see if a 'data/datalist' file should be added
+─  building 'RedRibbon_1.0-1.tar.gz' (686ms)
+   Warning: file 'RedRibbon/cleanup' did not have execute permissions: corrected
+   Warning: file 'RedRibbon/configure' did not have execute permissions: corrected
+   Warning: file 'RedRibbon/src/credribbon-1.1/configure' did not have execute permissions: corrected
+   
+Installing package into ‘C:/Users/jimjohnsonlab/AppData/Local/R/win-library/4.3’
+(as ‘lib’ is unspecified)
+* installing *source* package 'RedRibbon' ...
+** using staged installation
+
+   **********************************************
+   WARNING: this package has a configure script
+         It probably needs manual configuration
+   **********************************************
+
+
+** libs
+Error in system(paste(MAKE, p1(paste("-f", shQuote(makefiles))), "compilers"),  : 
+  'make' not found
+* removing 'C:/Users/jimjohnsonlab/AppData/Local/R/win-library/4.3/RedRibbon'
+Warning messages:
+1: In file.copy(savedcopy, lib, recursive = TRUE) :
+  problem copying C:\Users\jimjohnsonlab\AppData\Local\R\win-library\4.3\00LOCK\rlang\libs\x64\rlang.dll to C:\Users\jimjohnsonlab\AppData\Local\R\win-library\4.3\rlang\libs\x64\rlang.dll: Permission denied
+2: In file.copy(savedcopy, lib, recursive = TRUE) :
+  problem copying C:\Users\jimjohnsonlab\AppData\Local\R\win-library\4.3\00LOCK\vctrs\libs\x64\vctrs.dll to C:\Users\jimjohnsonlab\AppData\Local\R\win-library\4.3\vctrs\libs\x64\vctrs.dll: Permission denied
+3: In i.p(...) :
+  installation of package ‘C:/Users/JIMJOH~1/AppData/Local/Temp/RtmpKWblMZ/file323079756033/RedRibbon_1.0-1.tar.gz’ had non-zero exit status
+
+
+
+set.seed(42)
+n <- 1000
+n2 <- n %/% 2
+n4 <- n %/% 4
+a <- (1:n) - n2
+b <- a
+a[n4:(n4+n2-1)] <- rnorm(n2, sd=100)
+b[n4:(n4+n2-1)] <- rnorm(n2, sd=100)
+df <- data.frame(
+    id = paste0("gene", 1:n),
+    a = a,
+    b = b)
+```
+
+```{r RRHO (not used. Used online tool)}
+#BiocManager::install("RRHO")
+library(RRHO)
+
+#browseVignettes("RRHO")
+
+View(df)
+df <- read.delim("output/RNA_Protein_RRHO_input_unadjP.txt")
+
+df <- read.delim("output/RNA_Protein_RRHO_input_logFC.txt")
+
+
+rna.list <- df[2:3] %>%
+  rename(Rank=Rank.1)
+pro.list <- df[c(2,4)] %>%
+  rename(Rank=Rank.2)
+View(rna.list)
+View(pro.list)
+
+rrho <- RRHO(rna.list, pro.list,
+             labels = c("RNA","Protein"),
+             stepsize = 100,
+             BY=TRUE,
+             log10.ind=TRUE,
+             alternative='two.sided') #'enrichment'
+
+rrho <- RRHO(rna.list[1:1000,], pro.list[1:1000,],
+             labels = c("RNA","Protein"),
+             stepsize = 100,
+             BY=TRUE,
+             log10.ind=TRUE,
+             alternative='two.sided') #'enrichment'
+
+rrho <- RRHO(rna.list[1:1000, ], rna.list[1:1000, ],
+             labels = c("RNA","Protein"),
+             stepsize = 100,
+             BY=FALSE,
+             log10.ind=TRUE,
+             alternative='two.sided') #'enrichment'
+             
+
+lattice::levelplot(rrho$hypermat)
+lattice::levelplot(rrho$hypermat.by)
+View(rrho$hypermat.by)
+max(rrho$hypermat.counts)
+
+# max log10 p value
+which(rrho$hypermat.by==max(rrho$hypermat.by), arr.ind=T)
+
+     row col
+[1,]  35  48
+[2,]  42  54
+[3,]  43  54
+[4,]  44  54
+[5,]  45  54
+
+     
+# max log10 p value in bottom left quadrant
+which(rrho$hypermat.by==max(rrho$hypermat.by[43:77,1:41]), arr.ind=T)
+     row col
+[1,]  43  41
+
+pdf("figure/rrho_BY.pdf")
+{pdf(file = "figures/rrho_BY.pdf",
+    width = 6.5, 
+    height = 6.5)
+print(lattice::levelplot(rrho$hypermat.by))
+dev.off()
+}     
+?RRHO
+View(rrho)
+
+pval.testing <- pvalRRHO(rrho, replications = 50000, FUN = min) # took 1.5 day p value = 0.00014
+pval.testing <- pvalRRHO(rrho, replications = 50000, FUN = max) # took 1.5 day p value = 0
+?pvalRRHO
+
+View(pval.testing)
+pval.testing$pval # both p value and log2FC ranks and has p value of 0.00014
+
+
+# Create "gene" lists:
+list.length <- 7000
+list.names <- paste('Gene',1:list.length, sep='')
+gene.list1<- data.frame(list.names, sample(7000))
+gene.list2<- data.frame(list.names, sample(7000))
+# Compute overlap and significance
+RRHO.example <- RRHO(gene.list1, gene.list2, BY=TRUE, stepsize = 100, alternative='two.sided')
+lattice::levelplot(RRHO.example$hypermat)
+lattice::levelplot(RRHO.example$hypermat.by)
+pval.testing <- pvalRRHO(RRHO.example, replications = 1000, FUN = min)
+pval.testing$pval
+
+```
+
+
+```{r RRHO2}
+
+
+#library(devtools)
+#install_github("RRHO2/RRHO2", build_opts = c("--no-resave-data", "--no-manual"))
+
+library(RRHO2)
+
+rna.rank <- read.csv("output/RNA_for_RRHO2_unadjP.csv")
+pro.rank <- read.csv("output/Protein_for_RRHO2_unadjP.csv")
+nrow(rna.rank)
+
+RRHO_obj_BY <-  RRHO2_initialize(rna.rank, pro.rank, 
+                              labels = c("RNA", "Protein"), 
+                              log10.ind=TRUE,
+                              multipleTesting = "BY")
+
+
+## dd: down regulation in list1 and down regulation in list 2
+## uu: up regulation in list1 and up regulation in list 2
+## du: down regulation in list1 and up regulation in list 2
+## ud: up regulation in list1 and down regulation in list 2
+
+
+
+length(RRHO_obj_BY$genelist_uu$gene_list_overlap_uu)
+length(RRHO_obj_BY$genelist_dd$gene_list_overlap_dd)
+length(RRHO_obj_BY$genelist_ud$gene_list_overlap_ud)
+length(RRHO_obj_BY$genelist_du$gene_list_overlap_du)
+
+uu <- RRHO_obj_BY$genelist_uu$gene_list_overlap_uu
+dd <- RRHO_obj_BY$genelist_dd$gene_list_overlap_dd
+ud <- RRHO_obj_BY$genelist_ud$gene_list_overlap_ud
+du <- RRHO_obj_BY$genelist_du$gene_list_overlap_du
+
+RRHO2_heatmap(RRHO_obj_BY)
+
+save(uu, dd, ud, du, file = "output/RRHO2_uu_dd_ud_du.RData")
+load("output/RRHO2_uu_dd_ud_du.RData")
+
+# odds ratio
+
+RRHO_obj <-  RRHO2_initialize(rna.rank, pro.rank, labels = c("RNA", "Protein"), log10.ind=F, method = "fisher")
+
+RRHO2_heatmap(RRHO_obj)
+
+length(RRHO_obj$genelist_uu$gene_list_overlap_uu)
+length(RRHO_obj$genelist_dd$gene_list_overlap_dd)
+length(RRHO_obj$genelist_ud$gene_list_overlap_ud)
+length(RRHO_obj$genelist_du$gene_list_overlap_du)
+
+uu <- RRHO_obj$genelist_uu$gene_list_overlap_uu
+dd <- RRHO_obj$genelist_dd$gene_list_overlap_dd
+ud <- RRHO_obj$genelist_ud$gene_list_overlap_ud
+du <- RRHO_obj$genelist_du$gene_list_overlap_du
+
+save(uu, dd, ud, du, file = "output/RRHO2_uu_dd_ud_du_oddsratio.RData")
+load("output/RRHO2_uu_dd_ud_du_oddsratio.RData")
+
+```
+
+```{r formating RRHO results to plot}
+## Proteomics DE (done by Grace) vs RNAseq DE ----------
+
+df <- read.csv("output/RNA_Protein_FC_merge.csv")
+View(df)
+
+rrho.input <- read.delim("output/RNA_Protein_RRHO_input_unadjP.txt") 
+
+rrho.input <- read.delim("output/RNA_Protein_RRHO_input_logFC.txt") 
+
+
+View(rrho.input)
+
+df <- df %>% 
+  inner_join(rrho.input[,-1], by=c("Genes"="Gene.Name"))
+View(df)
+nrow(df)
+
+df <- df %>%
+  arrange(-Rank.1) %>%
+  mutate(Rank.1=c(1:nrow(df))) %>%
+  arrange(-Rank.2) %>%
+  mutate(Rank.2=c(1:nrow(df)))
+
+## use RRHO2 results
+#load("output/RRHO2_uu_dd.RData")
+
+# use RRHO results, bin 50, p value
+uu <- read.delim("output_RRHO/rankrank.66565658a711d0.list_of_genes.regionA.txt")$Gene.Name
+View(uu) #1487
+dd <- read.delim("output_RRHO/rankrank.66565658a711d0.list_of_genes.regionD.txt")$Gene.Name
+View(dd) #1853
+#du <- read.delim("output_RRHO/rankrank.165610044c9ae3.list_of_genes.regionB.txt")$Gene.Name
+#ud <- read.delim("output_RRHO/rankrank.165610044c9ae3.list_of_genes.regionC.txt")$Gene.Name
+
+## use RRHO results, bin 50, log2FC
+uu <- read.delim("output_RRHO_log2FC/rankrank.4656572a00bc7b.list_of_genes.regionA.txt")$Gene.Name
+View(uu) #800
+dd <- read.delim("output_RRHO_log2FC/rankrank.4656572a00bc7b.list_of_genes.regionD.txt")$Gene.Name
+View(dd) #1851
+
+
+## 
+
+#df <-  df %>%
+#  mutate(direction= case_when(Genes %in% uu ~ "up-up",
+#                              Genes %in% dd ~ "down-down",
+#                              Genes %in% ud ~ "up-down",
+#                              Genes %in% du ~ "down-up",
+#                              TRUE ~ "ns"))
+
+df <-  df %>%
+  mutate(direction= case_when(Genes %in% uu ~ "up-up",
+                              Genes %in% dd ~ "down-down",
+                              TRUE ~ "ns"))
+
+df$direction <- factor(df$direction, levels = c("up-up","down-down","ns"))
+View(df)
+
+write.csv(df,"output/RRHO_RNA_Protein_unadjP_50bin_plot.csv", row.names = F)
+
+write.csv(df,"output/RRHO_RNA_Protein_log2FC_50bin_plot.csv", row.names = F)
+
+```
+
+```{r plot fold change}
+# pick colors
+
+#library(scales)
+#hex <- hue_pal()(8)
+#show_col(hex)
+#print(hex)
+
+mypal <- c("#F8766D", "#00BFC4", "#999999") #"#E69F00", "#7CAE00",
+
+# p value
+df <- read.csv("output/RRHO_RNA_Protein_unadjP_50bin_plot.csv")
+
+df$direction <- factor(df$direction, levels = c("up-up","down-down","ns"))
+# plot
+View(df)
+
+ggplot(df,
+       aes(x=log2FoldChange, 
+           y=logFC  )) +  
+  geom_vline(xintercept = 0,linetype="dashed", color = "black")+
+  geom_hline(yintercept = 0,linetype="dashed", color = "black")+
+#  geom_smooth(
+    #        se=FALSE,
+#    method=lm
+#  )+
+  geom_point(aes(colour= 
+                   direction
+  ),
+  size=1.2, alpha= 0.8) +
+  
+  
+#  stat_cor(method = "pearson")+ #, label.x = 3, label.y = 30
+  
+  labs(y="Protein log2(Fold change T2D/ND)", x="RNA log2(Fold change T2D/ND)") +
+  scale_colour_manual(values=mypal) +
+  #  scale_x_continuous(breaks=c(0,2,4,6,8,10,12,14),
+  #                     limits= c(1,9.5)) +
+  #  scale_y_continuous(breaks=c(0,2,4,6,8,10,12,14),
+  #                     limits= c(1,9.5)) +
+  #scale_x_continuous(limits = ~ c(-1, 1) * max(abs(.x))) +
+  #scale_y_continuous(limits = ~ c(-1, 1) * max(abs(.x)))+
+  
+  geom_text_repel(aes(label=Genes,
+                      segment.size=0.5),
+                  size=2,
+                  color="black",
+                  #box.padding   = 0.4,
+                  #point.padding = 0,
+                  direction="y", 
+                  vjust = -1.5,
+                  hjust = 1,
+                  force = 1,
+                  force_pull=10,
+                  max.overlaps = 17, 
+                  #max.iter = 100000,
+                  min.segment.length = 0, # always draw line
+                  segment.color = 'grey70')+
+  
+  theme_classic() +
+  theme(
+    axis.title.y = element_text(colour = "black",size=14),
+    axis.title.x = element_text(colour = "black",size=14),
+    axis.text.y = element_text(colour = "black",size=12),
+    axis.text.x = element_text(colour = "black",size=12),
+    #axis.ticks.x = element_blank(),
+    #legend.title = element_blank(),
+    legend.position="none",
+    legend.title=element_text(size=14), 
+    legend.text=element_text(size=14),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    aspect.ratio=1/1) +
+  
+  labs(color = 
+         "adj.p<0.05"
+       #"p<0.05" 
+       #expression(atop("Correlation",paste("adj.p<0.05")))
+  )+
+  theme(axis.line = element_line()) +
+  #coord_axes_inside(labels_inside = TRUE) +    #https://stackoverflow.com/questions/17753101/center-x-and-y-axis-with-ggplot2
+  guides(colour = guide_legend(override.aes = list(size=2,alpha=0.9)))
+
+ggsave(filename="figures/RNA_protein_DE_RRHO_unadjP_50bin_label.pdf",width=5,height=5,units="in",dpi=600)
+
+
+# logFC
+df <- read.csv("output/RRHO_RNA_Protein_log2FC_50bin_plot.csv")
+
+df$direction <- factor(df$direction, levels = c("up-up","down-down","ns"))
+
+
+ggplot(df,
+       aes(x=log2FoldChange, 
+           y=logFC  )) +  
+  geom_vline(xintercept = 0,linetype="dashed", color = "black")+
+  geom_hline(yintercept = 0,linetype="dashed", color = "black")+
+#  geom_smooth(
+    #        se=FALSE,
+#    method=lm
+#  )+
+  geom_point(aes(colour= 
+                   direction
+  ),
+  size=1.2, alpha= 0.8) +
+  
+  
+#  stat_cor(method = "pearson")+ #, label.x = 3, label.y = 30
+  
+  labs(y="Protein log2(Fold change T2D/ND)", x="RNA log2(Fold change T2D/ND)") +
+  scale_colour_manual(values=mypal) +
+  #  scale_x_continuous(breaks=c(0,2,4,6,8,10,12,14),
+  #                     limits= c(1,9.5)) +
+  #  scale_y_continuous(breaks=c(0,2,4,6,8,10,12,14),
+  #                     limits= c(1,9.5)) +
+  #scale_x_continuous(limits = ~ c(-1, 1) * max(abs(.x))) +
+  #scale_y_continuous(limits = ~ c(-1, 1) * max(abs(.x)))+
+  
+  
+  theme_classic() +
+  theme(
+    axis.title.y = element_text(colour = "black",size=14),
+    axis.title.x = element_text(colour = "black",size=14),
+    axis.text.y = element_text(colour = "black",size=12),
+    axis.text.x = element_text(colour = "black",size=12),
+    #axis.ticks.x = element_blank(),
+    #legend.title = element_blank(),
+    legend.position="none",
+    legend.title=element_text(size=14), 
+    legend.text=element_text(size=14),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    aspect.ratio=1/1) +
+  
+  labs(color = 
+         "adj.p<0.05"
+       #"p<0.05" 
+       #expression(atop("Correlation",paste("adj.p<0.05")))
+  )+
+  theme(axis.line = element_line()) +
+  #coord_axes_inside(labels_inside = TRUE) +    #https://stackoverflow.com/questions/17753101/center-x-and-y-axis-with-ggplot2
+  guides(colour = guide_legend(override.aes = list(size=2,alpha=0.9)))
+ggsave(filename="figures/RNA_protein_DE_RRHO_log2FC_50bin.pdf",width=5,height=5,units="in",dpi=600)
+ggsave(filename="figures/RNA_protein_DE_RRHO_log2FC_50bin_label.pdf",width=5,height=5,units="in",dpi=600)
+
+
+
+
+```
+
+```{r plot rank}
+
+
+df <- read.csv("output/RRHO_RNA_Protein_unadjP_50bin_plot.csv")
+
+
+df <- read.csv("output/RRHO_RNA_Protein_log2FC_50bin_plot.csv")
+
+
+df$direction <- factor(df$direction, levels = c("up-up","down-down","ns"))
+View(df)
+# plot
+mypal <- c("#F8766D", "#00BFC4", "#999999") #"#E69F00", "#7CAE00"
+
+# The rank switch (down|up) after reversed order (from the default up-to-down to down-to-up)
+nrow(df) - 3495 #4112
+nrow(df) - 4296 #3321
+
+pro.sig.up <- df %>% filter(p<0.05 & Metric.2>0)
+min(pro.sig.up$Rank.2) # 6585 - 7606
+View(pro.sig.up)
+
+pro.sig.down <- df %>% filter(p<0.05 & Metric.2<0)
+max(pro.sig.down$Rank.2) # 1 - 890
+View(pro.sig.up)
+
+rna.sig.up <- df %>% filter(pvalue<0.05 & Metric.1>0)
+min(rna.sig.up$Rank.1) # 7145 - 7606
+View(rna.sig.up)
+
+rna.sig.down <- df %>% filter(pvalue<0.05 & Metric.1<0)
+max(rna.sig.down$Rank.1) # 1 - 657
+
+ggplot(df,
+       aes(x=Rank.1, 
+           y=Rank.2  )) +  
+#  geom_smooth(
+    #        se=FALSE,
+#    method=lm
+#  )+
+  geom_point(aes(colour= 
+                   direction
+  ),
+  size=1.2, alpha= 0.8) +
+  
+  geom_vline(xintercept = 4112,linetype="dashed", color = "black")+
+  geom_hline(yintercept = 3321,linetype="dashed", color = "black")+
+  
+  geom_segment(aes(x = 1, y = 1, xend = 657, yend = 1),linetype="solid", linewidth = 1, lineend = "round", color = "black")+
+  geom_segment(aes(x = 1, y = 1, xend = 1, yend = 890),linetype="solid", linewidth = 1, lineend = "round", color = "black")+
+  geom_segment(aes(x = 657, y = 1, xend = 657, yend = 890),linetype="solid", linewidth = 1, lineend = "round", color = "black")+
+  geom_segment(aes(x = 1, y = 890, xend = 657, yend = 890),linetype="solid", linewidth = 1, lineend = "round", color = "black")+
+  
+  geom_segment(aes(x = 7145, y = 6585, xend = 7145, yend = 7606),linetype="solid", linewidth = 1, lineend = "round",  color = "black")+
+  geom_segment(aes(x = 7145, y = 6585, xend = 7606, yend = 6585),linetype="solid", linewidth = 1, lineend = "round", color = "black")+
+  geom_segment(aes(x = 7145, y = 7606, xend = 7606, yend = 7606),linetype="solid", linewidth = 1, lineend = "round", color = "black")+
+  geom_segment(aes(x = 7606, y = 6585, xend = 7606, yend = 7606),linetype="solid", linewidth = 1, lineend = "round", color = "black")+
+  
+#  stat_cor(method = "pearson")+ #, label.x = 3, label.y = 30
+  
+  labs(y="Protein rank (down to up)", x="RNA rank (down to up)") +
+  scale_colour_manual(values=mypal) +
+  #  scale_x_continuous(breaks=c(0,2,4,6,8,10,12,14),
+  #                     limits= c(1,9.5)) +
+  #  scale_y_continuous(breaks=c(0,2,4,6,8,10,12,14),
+  #                     limits= c(1,9.5)) +
+  #scale_x_continuous(limits = ~ c(-1, 1) * max(abs(.x))) +
+  #scale_y_continuous(limits = ~ c(-1, 1) * max(abs(.x)))+
+  
+  theme_classic() +
+  theme(
+    axis.title.y = element_text(colour = "black",size=14),
+    axis.title.x = element_text(colour = "black",size=14),
+    axis.text.y = element_text(colour = "black",size=12),
+    axis.text.x = element_text(colour = "black",size=12),
+    #axis.ticks.x = element_blank(),
+    #legend.title = element_blank(),
+    legend.position="none",
+    legend.title=element_text(size=14), 
+    legend.text=element_text(size=14),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    aspect.ratio=1/1) +
+  
+  labs(color = 
+         "adj.p<0.05"
+       #"p<0.05" 
+       #expression(atop("Correlation",paste("adj.p<0.05")))
+  )+
+  theme(axis.line = element_line()) +
+  #coord_axes_inside(labels_inside = TRUE) +    #https://stackoverflow.com/questions/17753101/center-x-and-y-axis-with-ggplot2
+  guides(colour = guide_legend(override.aes = list(size=2,alpha=0.9)))
+?geom_segment
+
+ggsave(filename="figures/RNA_protein_DE_RRHO_rank_bin50.pdf",width=5,height=5,units="in",dpi=600)
+
+ggsave(filename="figures/RNA_protein_DE_RRHO_rank_P_square.pdf",width=5,height=5,units="in",dpi=600)
+
+
+ggsave(filename="figures/RNA_protein_DE_RRHO_rank_log2FC.pdf",width=5,height=5,units="in",dpi=600)
+
+```
+
+
+
+
+
+```{r formating df to plot old}
+
+df <- read.csv("output/RNA_Protein_FC_merge.csv")
+View(df)
+
+rrho.input <- read.delim("output/RNA_Protein_RRHO_input_2.txt") 
+View(rrho.input)
+
+df <- df %>% 
+  inner_join(rrho.input[,-1], by=c("Genes"="Gene.Name"))
+View(df)
+nrow(df)
+
+
+# use RRHO2 results
+#load("output/RRHO2_uu_dd.RData")
+
+# use RRHO results
+uu <- read.delim("output_RRHO_old/rankrank.3655d44480743b.list_of_genes.regionA.txt")$Gene.Name
+View(uu)
+dd <- read.delim("output_RRHO_old/rankrank.3655d44480743b.list_of_genes.regionD.txt")$Gene.Name
+View(dd)
+du <- read.delim("output_RRHO_old/rankrank.3655d44480743b.list_of_genes.regionB.txt")$Gene.Name
+ud <- read.delim("output_RRHO_old/rankrank.3655d44480743b.list_of_genes.regionC.txt")$Gene.Name
+#
+#uu <- read.delim("output_RRHO/rankrank.3655d44480743b.list_of_genes.regionA.txt")$Gene.Name
+#dd <- read.delim("output_RRHO/rankrank.3655d44480743b.list_of_genes.regionD.txt")$Gene.Name
+#du <- read.delim("output_RRHO/rankrank.3655d44480743b.list_of_genes.regionB.txt")$Gene.Name
+#ud <- read.delim("output_RRHO/rankrank.3655d44480743b.list_of_genes.regionC.txt")$Gene.Name
+
+length(uu)
+## 
+
+df <-  df %>%
+  mutate(direction= case_when(Genes %in% uu ~ "up-up",
+                              Genes %in% dd ~ "down-down",
+                              Genes %in% ud ~ "up-down",
+                              Genes %in% du ~ "down-up",
+                              TRUE ~ "ns"))
+
+df$direction <- factor(df$direction, levels = c("up-up","down-down","up-down","down-up","ns"))
+View(df)
+
+write.csv(df,"output/RRHO_old_RNA_Protein_plot.csv", row.names = F)
+
+```
+
+```{r plot fold change old}
+# pick colors
+
+#library(scales)
+#hex <- hue_pal()(8)
+#show_col(hex)
+#print(hex)
+
+mypal <- c("#F8766D", "#00BFC4","#E69F00", "#7CAE00", "#999999")
+
+df <- read.csv("output/RRHO_old_RNA_Protein_plot.csv")
+df$direction <- factor(df$direction, levels = c("up-up","down-down","up-down","down-up","ns"))
+# plot
+
+ggplot(df,
+       aes(x=log2FoldChange, 
+           y=logFC  )) +  
+  geom_vline(xintercept = 0,linetype="dashed", color = "grey70")+
+  geom_hline(yintercept = 0,linetype="dashed", color = "grey70")+
+#  geom_smooth(
+    #        se=FALSE,
+#    method=lm
+#  )+
+  geom_point(aes(colour= 
+                   direction
+  ),
+  size=1.2, alpha= 0.8) +
+  
+  
+#  stat_cor(method = "pearson")+ #, label.x = 3, label.y = 30
+  
+  labs(y="Protein log2(Fold change T2D/ND)", x="RNA log2(Fold change T2D/ND)") +
+  scale_colour_manual(values=mypal) +
+  #  scale_x_continuous(breaks=c(0,2,4,6,8,10,12,14),
+  #                     limits= c(1,9.5)) +
+  #  scale_y_continuous(breaks=c(0,2,4,6,8,10,12,14),
+  #                     limits= c(1,9.5)) +
+  #scale_x_continuous(limits = ~ c(-1, 1) * max(abs(.x))) +
+  #scale_y_continuous(limits = ~ c(-1, 1) * max(abs(.x)))+
+  
+  theme_classic() +
+  theme(
+    axis.title.y = element_text(colour = "black",size=14),
+    axis.title.x = element_text(colour = "black",size=14),
+    axis.text.y = element_text(colour = "black",size=12),
+    axis.text.x = element_text(colour = "black",size=12),
+    #axis.ticks.x = element_blank(),
+    #legend.title = element_blank(),
+    legend.position="none",
+    legend.title=element_text(size=14), 
+    legend.text=element_text(size=14),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    aspect.ratio=1/1) +
+  
+  labs(color = 
+         "adj.p<0.05"
+       #"p<0.05" 
+       #expression(atop("Correlation",paste("adj.p<0.05")))
+  )+
+  theme(axis.line = element_line()) +
+  #coord_axes_inside(labels_inside = TRUE) +    #https://stackoverflow.com/questions/17753101/center-x-and-y-axis-with-ggplot2
+  guides(colour = guide_legend(override.aes = list(size=2,alpha=0.9)))
+
+
+ggsave(filename="figures/RNA_protein_DE_RRHO2.pdf",width=5,height=5,units="in",dpi=600)
+
+ggsave(filename="figures/RNA_protein_DE_RRHO.pdf",width=5,height=5,units="in",dpi=600)
+
+ggsave(filename="figures/RNA_protein_DE_RRHO_allregions_old.pdf",width=5,height=5,units="in",dpi=600)
+
+geom_text_repel(aes(label=Gene,
+                      segment.size=0.5),
+                  size=2.5,
+                  color="black",
+                  box.padding   = 0.4,
+                  point.padding = 0,
+                 # force=10,
+                #  force_pull=1,
+                  max.overlaps = Inf, # always show all label, regardless of overlap
+                  min.segment.length = 0, # always draw line
+                  segment.color = 'grey70')+
+
+```
+
+```{r plot rank old}
+
+
+df <- read.csv("output/RRHO_old_RNA_Protein_plot.csv")
+
+df$direction <- factor(df$direction, levels = c("up-up","down-down","up-down","down-up","ns"))
+View(df)
+# plot
+mypal <- c("#F8766D", "#00BFC4","#E69F00", "#7CAE00", "#999999")
+
+# The rank switch (down|up) after reversed order (from the default up-to-down to down-to-up)
+nrow(df) - 3495 #4112
+nrow(df) - 4294 #3313
+ggplot(df,
+       aes(x=Rank.1, 
+           y=Rank.2  )) +  
+#  geom_smooth(
+    #        se=FALSE,
+#    method=lm
+#  )+
+  geom_point(aes(colour= 
+                   direction
+  ),
+  size=1.2, alpha= 0.8) +
+  
+  geom_vline(xintercept = 3495.5,linetype="dashed", color = "black")+
+  geom_hline(yintercept = 4294.5,linetype="dashed", color = "black")+
+  
+#  stat_cor(method = "pearson")+ #, label.x = 3, label.y = 30
+  
+  labs(y="Protein rank (up to down)", x="RNA rank (up to down)") +
+  scale_colour_manual(values=mypal) +
+  #  scale_x_continuous(breaks=c(0,2,4,6,8,10,12,14),
+  #                     limits= c(1,9.5)) +
+  #  scale_y_continuous(breaks=c(0,2,4,6,8,10,12,14),
+  #                     limits= c(1,9.5)) +
+  #scale_x_continuous(limits = ~ c(-1, 1) * max(abs(.x))) +
+  #scale_y_continuous(limits = ~ c(-1, 1) * max(abs(.x)))+
+  
+  theme_classic() +
+  theme(
+    axis.title.y = element_text(colour = "black",size=14),
+    axis.title.x = element_text(colour = "black",size=14),
+    axis.text.y = element_text(colour = "black",size=12),
+    axis.text.x = element_text(colour = "black",size=12),
+    #axis.ticks.x = element_blank(),
+    #legend.title = element_blank(),
+    legend.position="none",
+    legend.title=element_text(size=14), 
+    legend.text=element_text(size=14),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    aspect.ratio=1/1) +
+  
+  labs(color = 
+         "adj.p<0.05"
+       #"p<0.05" 
+       #expression(atop("Correlation",paste("adj.p<0.05")))
+  )+
+  theme(axis.line = element_line()) +
+  #coord_axes_inside(labels_inside = TRUE) +    #https://stackoverflow.com/questions/17753101/center-x-and-y-axis-with-ggplot2
+  guides(colour = guide_legend(override.aes = list(size=2,alpha=0.9)))
+
+
+ggsave(filename="figures/RNA_protein_DE_RRHO_rank_old.pdf",width=5,height=5,units="in",dpi=600)
+
+
+```
+
+## Proteomics DE (done by Grace) vs RNAseq DE
+
+
+```{r DE RNA protein scatter plot}
+
+rna.deseq2 <- read.csv(file="output/DESeq2_islets_RNA_oneBatch50_batch.csv")
+nrow(rna.deseq2) #20806
+
+pro.de <- read.csv("output/islet_proteomics_DE_Grace.csv") # 118 ND, 16 T2D
+nrow(pro.de) # 7811
+
+# check missing or duplicated IDs
+
+dup=pro.de %>% group_by(entrez) %>% dplyr::filter(n() > 1)
+View(dup)
+
+View(pro.de)
+
+
+# removed duplicated protein ENSG
+{pro.de.unique <- pro.de
+pro.de.unique <- pro.de.unique %>%
+  mutate(sum = mean.T2D + mean.ND) %>%
+  arrange(-sum)
+pro.de.unique <- pro.de.unique[!duplicated(pro.de.unique$ENSG),]
+
+nrow(pro.de.unique) #7792
+length(pro.de.unique$ENSG)
+}
+View(pro.de.unique)
+View(rna.deseq2)
+View(pro.de)
+
+rna.pro <- rna.deseq2 %>% inner_join(pro.de.unique, by = "ENSG")
+View(rna.pro)
+
+rna.pro <- rna.pro %>%
+  mutate(adj.sig = case_when(padj<0.05 & p.adj<0.05 ~ "Both",
+                               padj<0.05 & p.adj>=0.05 ~ "RNA only",
+                               padj>=0.05 & p.adj<0.05 ~ "Protein only",
+                               padj>=0.05 & p.adj>=0.05 ~ "NS"
+                               
+                               ))
+rna.pro$adj.sig <- factor(rna.pro$adj.sig, levels = c("Both","RNA only", "Protein only"))
+
+write.csv(rna.pro, "output/RNAseq_Proteomics_DEstats_combined.csv", row.names = F)
+
+cbPalette <- c(
+  "#E69F00", #lightorange
+  "#CC79A7", #magenta
+  "#56B4E9", #blue
+  "grey90",
+  "#999999", #grey
+  "#009E73", #green
+  "#D55E00", #darkorange
+  "#0072B2", #darkblue
+  "#F0E442" #yellow
+)
+
+ggplot(#rna.pro.deseq.xy,
+  #rna.pro.deseq.xy[rna.pro.deseq.xy$unadj.sig!="ns",],
+  rna.pro[!is.na(rna.pro$adj.sig),],
+  
+  aes(x=log2FoldChange, 
+      y=logFC
+      
+  )
+) +  
+  geom_vline(xintercept = 0,linetype="dashed", color = "grey50")+
+  geom_hline(yintercept = 0,linetype="dashed", color = "grey50")+
+  geom_smooth(
+    #        se=FALSE,
+    method=lm
+  )+
+  geom_point(aes(colour= 
+                   #unadj.sig
+                   adj.sig
+  ),
+  size=0.8, alpha= 0.8) +
+  
+  
+  stat_cor(method = "pearson" #, label.x = 3, label.y = 30
+  )+
+  
+  labs(y="protein log2(T2D/ND)", x="RNA log2(T2D/ND)") +
+  scale_colour_manual(values=cbPalette) +
+  #  scale_x_continuous(breaks=c(0,2,4,6,8,10,12,14),
+  #                     limits= c(1,9.5)) +
+  #  scale_y_continuous(breaks=c(0,2,4,6,8,10,12,14),
+  #                     limits= c(1,9.5)) +
+  #scale_x_continuous(limits = ~ c(-1, 1) * max(abs(.x))) +
+  #scale_y_continuous(limits = ~ c(-1, 1) * max(abs(.x)))+
+  
+  theme_classic() +
+  theme(
+    axis.title.y = element_text(colour = "black",size=14),
+    axis.title.x = element_text(colour = "black",size=14),
+    axis.text.y = element_text(colour = "black",size=12),
+    axis.text.x = element_text(colour = "black",size=12),
+    #axis.ticks.x = element_blank(),
+    #legend.title = element_blank(),
+    legend.position="right",
+    legend.title=element_text(size=14), 
+    legend.text=element_text(size=14),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    aspect.ratio=1/1) +
+  
+  labs(color = 
+         "Adjusted p<0.05"
+       #"p<0.05" 
+       #expression(atop("Correlation",paste("adj.p<0.05")))
+  )+
+  theme(axis.line = element_line()) +
+  #coord_axes_inside(labels_inside = TRUE) +    #https://stackoverflow.com/questions/17753101/center-x-and-y-axis-with-ggplot2
+  guides(colour = guide_legend(override.aes = list(size=2,alpha=0.9)))
+
+
+ggsave(filename="figures/RNA_deseq2Batch_protein_Grace_adj_logFC_oneBatch_linear.pdf",width=6.5,height=5,units="in")
+
+```
+
+```{r common DE RNA protein scatter plot}
+pro.filter <- read.table("output/protein_filter50.txt", header = T)
+nrow(pro.filter) # 7724
+length(unique(pro.filter$ENSG)) # 7711
+View(pro.filter)
+all(rna.pro$Protein.Ids %in% pro.filter$Protein.Ids) #FALSE
+
+
+rna.pro <- read.csv("output/RNAseq_Proteomics_DEstats_combined.csv")
+dim(rna.pro) # 7690
+View(rna.pro)
+
+rna.pro.common <- rna.pro %>% filter(adj.sig == "Both") %>%
+  mutate(direction = case_when(log2FoldChange>0 & logFC>0 ~ "Up",
+                               log2FoldChange<0 & logFC<0 ~ "Down",
+                               .default = "Opposite"))
+rna.pro.common$direction <- factor(rna.pro.common$direction, levels = c("Up","Down"))
+View(rna.pro.common)
+nrow(rna.pro)
+
+# numbers for Venn diagram
+rna.pro.venn <- rna.pro %>% 
+  mutate(Up = case_when(padj<0.05 & p.adj<0.05 & log2FoldChange>0 & logFC>0 ~ "Up.Both",
+                        padj<0.05 & p.adj>=0.05 & log2FoldChange>0 ~ "Up.RNA",
+                        padj>=0.05 & p.adj<0.05 & logFC>0 ~ "Up.Protein")) %>%
+  mutate(Down = case_when(padj<0.05 & p.adj<0.05 & log2FoldChange<0 & logFC<0 ~ "Down.Both",
+                          padj<0.05 & p.adj>=0.05 & log2FoldChange<0 ~ "Down.RNA",
+                          padj>=0.05 & p.adj<0.05 & logFC<0 ~ "Down.Protein"))
+
+# Below, the intersect is accurate. The unique sections have a few less because some are not commonly detected
+
+table(rna.pro.venn$Up) 
+#   Up.Both Up.Protein     Up.RNA 
+#         4        195         62
+         
+table(rna.pro.venn$Down)
+#   Down.Both Down.Protein     Down.RNA 
+#          44          307          120 
+
+rna.deseq2 <- read.csv(file="output/DESeq2_islets_RNA_oneBatch50_batch.csv")
+nrow(rna.deseq2) #20806
+rna.deseq2.up <- rna.deseq2 %>% filter(padj<0.05, log2FoldChange>0)
+rna.deseq2.down <- rna.deseq2 %>% filter(padj<0.05, log2FoldChange<0)
+nrow(rna.deseq2.up) # 146 
+nrow(rna.deseq2.down) # 286
+
+pro.de <- read.csv("output/islet_proteomics_DE_Grace.csv") # 118 ND, 16 T2D
+nrow(pro.de) # 7811
+pro.de.up <- pro.de %>% filter(p.adj<0.05, logFC>0)
+pro.de.down <- pro.de %>% filter(p.adj<0.05, logFC<0)
+nrow(pro.de.up) # 200
+nrow(pro.de.down) # 356
+
+# 87 proteins in Grace DE results are outside my 50% detection cutoff. 3 of them are significant DE
+## Grace's cutoff was probably >=50% in ND or T2D, while my cutoff was 50% in all subjects
+
+df <- pro.de %>% filter(!Protein.Ids %in% pro.filter$Protein.Ids)
+View(df)
+
+df <- df %>% mutate(percent.all = (percent.T2D*16 + percent.ND*118)/(16+118) )
+
+write.csv(df, "output/proteomics_Grace_DE_outside_HC_cutoff.csv", row.names = F)
+
+
+# Summary numbers for Venn diagram
+7724 proteins (>50% samples)
+20806 RNAs (>5 counts >50% samples)
+7609 common genes
+
+RNAseq.Up 146, RNAseq.Down 286
+Proteomics.Up 200, Proteomics.Down 356
+Both.Up 4, Both.Down 44
+
+
+
+# plot
+ggplot( # df,aes(x=`Transcriptome log2FoldChange`, y=`Proteome log2FoldChange`)
+     rna.pro.common, aes(x=log2FoldChange, y=logFC) 
+  )+  
+  geom_vline(xintercept = 0,linetype="dashed", color = "grey70")+
+  geom_hline(yintercept = 0,linetype="dashed", color = "grey70")+
+#  geom_smooth(
+    #        se=FALSE,
+#    method=lm
+#  )+
+  geom_point(aes(colour= 
+                   direction
+  ),
+  size=1.2, alpha= 0.8) +
+  
+  xlim(c(-3.5,1.5)) +
+  
+  
+#  stat_cor(method = "pearson")+ #, label.x = 3, label.y = 30
+  
+  labs(y="Protein log2(Fold change T2D/ND)", x="RNA log2(Fold change T2D/ND)") +
+  #scale_colour_manual(values=cbPalette) +
+  #  scale_x_continuous(breaks=c(0,2,4,6,8,10,12,14),
+  #                     limits= c(1,9.5)) +
+  #  scale_y_continuous(breaks=c(0,2,4,6,8,10,12,14),
+  #                     limits= c(1,9.5)) +
+  #scale_x_continuous(limits = ~ c(-1, 1) * max(abs(.x))) +
+  #scale_y_continuous(limits = ~ c(-1, 1) * max(abs(.x)))+
+  geom_text_repel(aes(label=symbol,
+                      segment.size=0.35,
+                      color=direction),
+                  size=3.5,
+                  #color="black",
+                  box.padding   = 0.4,
+                  point.padding = 0,
+                 # force=10,
+                #  force_pull=1,
+                  max.overlaps = Inf, # always show all label, regardless of overlap
+                  min.segment.length = 0 # always draw line
+                  #segment.color = 'grey70'
+                )+
+  
+  theme_classic() +
+  theme(
+    axis.title.y = element_text(colour = "black",size=14),
+    axis.title.x = element_text(colour = "black",size=14),
+    axis.text.y = element_text(colour = "black",size=12),
+    axis.text.x = element_text(colour = "black",size=12),
+    #axis.ticks.x = element_blank(),
+    #legend.title = element_blank(),
+    legend.position="none",
+    legend.title=element_text(size=14), 
+    legend.text=element_text(size=14),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    aspect.ratio=1/1) +
+  
+  labs(color = 
+         "adj.p<0.05"
+       #"p<0.05" 
+       #expression(atop("Correlation",paste("adj.p<0.05")))
+  )+
+  theme(axis.line = element_line()) +
+  #coord_axes_inside(labels_inside = TRUE) +    #https://stackoverflow.com/questions/17753101/center-x-and-y-axis-with-ggplot2
+  guides(colour = guide_legend(override.aes = list(size=2,alpha=0.9)))
+
+
+#ggsave(filename="figures/RNA_protein_DE_new2.pdf",width=5,height=5,units="in",dpi=600)
+
+#ggsave(filename="figures/RNA_protein_DE_new2.5_thin0.3_updated.pdf",width=5,height=5,units="in",dpi=600)
+#ggsave(filename="figures/RNA_protein_DE_new2.5_thin0.5_updated.pdf",width=5,height=5,units="in",dpi=600)
+ggsave(filename="figures/RNA_protein_DE_new3.5.pdf",width=5,height=5,units="in")
+
+ggsave(filename="figures/RNA_protein_DE_new3.5_color_batch.svg",width=5,height=5,units="in")
+```
