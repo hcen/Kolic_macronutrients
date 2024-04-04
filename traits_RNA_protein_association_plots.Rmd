@@ -982,7 +982,7 @@ for (i in 1:length(s.col)) {
 View(pos.list)
 View(neg.list)
 
-order_coeff <- function(df, pro.list){
+order_coeff <- function(pro.list){
   df <- Reduce(function(dtf1, dtf2) merge(dtf1, dtf2, by = "ID", all = TRUE),
         pro.list) 
   
@@ -996,9 +996,10 @@ order_coeff <- function(df, pro.list){
 }
 
 
-pos.df <- order_coeff(pos.df, pos.list)
-neg.df <- order_coeff(neg.df, neg.list)
+pos.df <- order_coeff(pos.list)
+neg.df <- order_coeff(neg.list)
 View(neg.df)
+
 summary(pos.df[1:50, grep("coeff_", colnames(pos.df))]) 
 summary(neg.df[1:50, grep("coeff_", colnames(neg.df))]) 
 ## heatmaps for secretion correlated postive or negative proteins -------------------
