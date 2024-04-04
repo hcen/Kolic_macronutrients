@@ -996,21 +996,6 @@ order_coeff <- function(df, pro.list){
 }
 
 
-# not used, not finished
-order_p <- function(df, pro.list){
-  df <- Reduce(function(dtf1, dtf2) merge(dtf1, dtf2, by = "ID", all = TRUE),
-        pro.list) 
-  
-  df$signed_p <- 
-  df$intersect.num <- rowSums(!is.na(df[ , grep("set_", colnames(df))]))
-  df$sum.logP <- abs( rowSums( df[ , grep("signed.log.p_", colnames(df))], na.rm = T) )
-  df$mean.logP <- abs( rowMeans( df[ , grep("signed.log.p_", colnames(df))], na.rm = T) )
-  df <- df[order(-df$intersect.num, -df$mean.coeff),]
-  df <- df %>% left_join(pro.lm.results[1:2]) %>%
-    relocate(Genes, .after = "ID")
-  return(df)
-}
-
 pos.df <- order_coeff(pos.df, pos.list)
 neg.df <- order_coeff(neg.df, neg.list)
 View(neg.df)
